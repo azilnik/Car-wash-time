@@ -2,8 +2,8 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # Run every day at 8:00 AM UTC
-    - cron: "0 8 * * *"
+    # Run every day at 9:00 AM UTC
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       latitude:
@@ -17,7 +17,7 @@ env:
   LATITUDE: ${{ inputs.latitude || secrets.LATITUDE }}
   LONGITUDE: ${{ inputs.longitude || secrets.LONGITUDE }}
   NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-  DRY_DAYS: ${{ secrets.DRY_DAYS || '3' }}
+
 
 jobs:
   check-weather:
@@ -50,10 +50,11 @@ jobs:
           # Precipitation WMO codes
           PRECIP_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82 85 86 95 96 99"
 
-          ALL_DRY=true
+          TOMORROW_WET=false
+          ANY_WET=false
           FORECAST_SUMMARY=""
 
-          for i in $(seq 1 "$DRY_DAYS"); do
+          for i in 1 2 3; do
             DATE=$(echo "$RESPONSE"      | jq -r ".daily.time[$i]")
             CODE=$(echo "$RESPONSE"      | jq -r ".daily.weather_code[$i]")
             PRECIP=$(echo "$RESPONSE"    | jq -r ".daily.precipitation_sum[$i]")
@@ -69,26 +70,40 @@ jobs:
               IS_WET=true
             fi
 
-            STATUS="Dry"
             if [ "$IS_WET" = true ]; then
-              STATUS="Wet"
-              ALL_DRY=false
+              ANY_WET=true
+              if [ "$i" = 1 ]; then TOMORROW_WET=true; fi
             fi
+
+            STATUS="Dry"
+            [ "$IS_WET" = true ] && STATUS="Wet"
 
             FORECAST_SUMMARY="${FORECAST_SUMMARY}${DATE}: code=${CODE} precip=${PRECIP}mm prob=${PROB}% [${STATUS}]\n"
             echo "$DATE: code=$CODE precip=${PRECIP}mm prob=${PROB}% [$STATUS]"
           done
 
-          if [ "$ALL_DRY" = true ]; then
-            echo "All dry! Sending notification..."
-            curl -sf \
-              -H "Title: Time for a Car Wash!" \
-              -H "Tags: car,white_check_mark" \
-              -d "No rain or snow expected in the next ${DRY_DAYS} days.
+          # Three-tier verdict
+          if [ "$TOMORROW_WET" = true ]; then
+            TITLE="No wash today"
+            BODY="Snow or rain in a day."
+            TAGS="car,x"
+          elif [ "$ANY_WET" = true ]; then
+            TITLE="Maybe worth a wash"
+            BODY="Possible rain or snow in 3 days."
+            TAGS="car,thinking"
+          else
+            TITLE="Good day for a car wash!"
+            BODY="Nothing for 3 days."
+            TAGS="car,white_check_mark"
+          fi
+
+          echo "Verdict: $TITLE"
+          echo "Sending notification..."
+          curl -sf \
+            -H "Title: ${TITLE}" \
+            -H "Tags: ${TAGS}" \
+            -d "${BODY}
 
           $(echo -e "$FORECAST_SUMMARY")" \
-              "https://ntfy.sh/${NTFY_TOPIC}"
-            echo "Notification sent!"
-          else
-            echo "Precipitation expected -- skipping notification."
-          fi
+            "https://ntfy.sh/${NTFY_TOPIC}"
+          echo "Notification sent!"
