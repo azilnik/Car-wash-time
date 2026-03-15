@@ -96,13 +96,27 @@ function analyzeForecast(data, dryDays) {
         });
     }
 
-    // Check the next N days (skip today = index 0, look at 1..dryDays)
-    const windowStart = 1;
-    const windowEnd = Math.min(windowStart + dryDays, results.length);
-    const window = results.slice(windowStart, windowEnd);
-    const allDry = window.every((d) => !d.isPrecipitation);
+    // Check the next 3 days (skip today = index 0, look at 1..3)
+    const windowEnd = Math.min(4, results.length);
+    const window = results.slice(1, windowEnd);
 
-    return { days: results, allDry, checkedDays: window };
+    const tomorrowWet = window.length > 0 && window[0].isPrecipitation;
+    const anyWet = window.some((d) => d.isPrecipitation);
+
+    // Three-tier verdict:
+    //   "good"  = no precip for 3 days
+    //   "maybe" = precip in days 2-3 but not tomorrow
+    //   "no"    = precip tomorrow
+    let verdict;
+    if (tomorrowWet) {
+        verdict = "no";
+    } else if (anyWet) {
+        verdict = "maybe";
+    } else {
+        verdict = "good";
+    }
+
+    return { days: results, verdict, checkedDays: window };
 }
 
 // ── UI rendering ───────────────────────────────────────────────────
@@ -162,13 +176,16 @@ function renderForecast(analysis, dryDays) {
         grid.appendChild(card);
     });
 
-    status.classList.remove("hidden", "status-go", "status-wait");
-    if (analysis.allDry) {
+    status.classList.remove("hidden", "status-go", "status-maybe", "status-wait");
+    if (analysis.verdict === "good") {
         status.className = "status-banner status-go";
-        status.textContent = "It's Car Wash Time! No precipitation expected in the next " + dryDays + " days.";
+        status.textContent = "Good day for a car wash! Nothing for 3 days.";
+    } else if (analysis.verdict === "maybe") {
+        status.className = "status-banner status-maybe";
+        status.textContent = "Maybe worth a wash \u2014 possible rain or snow in 3 days.";
     } else {
         status.className = "status-banner status-wait";
-        status.textContent = "Hold off \u2014 precipitation is expected within the next " + dryDays + " days.";
+        status.textContent = "No wash \u2014 snow or rain in a day.";
     }
 }
 
@@ -200,25 +217,40 @@ async function runCheck() {
         const analysis = analyzeForecast(data, settings.dryDays || 3);
         renderForecast(analysis, settings.dryDays || 3);
 
-        if (analysis.allDry) {
-            log("No precipitation in the next " + (settings.dryDays || 3) + " days!");
-            if (settings.ntfyTopic) {
-                log("Sending notification to ntfy.sh/" + settings.ntfyTopic + "...");
-                const dryDaysList = analysis.checkedDays
-                    .map((d) => `${dayName(d.date)}: ${weatherDescriptions[d.weatherCode] || "Clear"} (${d.precipProb}% chance)`)
-                    .join("\n");
-                await sendNtfyAlert(
-                    settings.ntfyTopic,
-                    "Time for a Car Wash!",
-                    `No rain or snow expected in the next ${settings.dryDays || 3} days.\n\n${dryDaysList}`,
-                    "car,white_check_mark"
-                );
-                log("Notification sent!");
-            } else {
-                log("No ntfy topic configured \u2014 skipping notification.");
-            }
+        const forecastList = analysis.checkedDays
+            .map((d) => `${dayName(d.date)}: ${weatherDescriptions[d.weatherCode] || "Clear"} (${d.precipProb}% chance)`)
+            .join("\n");
+
+        const notifications = {
+            good: {
+                title: "Good day for a car wash!",
+                body: `Nothing for 3 days.\n\n${forecastList}`,
+                tags: "car,white_check_mark",
+                logMsg: "All clear for 3 days!",
+            },
+            maybe: {
+                title: "Maybe worth a wash",
+                body: `Possible rain or snow in 3 days.\n\n${forecastList}`,
+                tags: "car,thinking",
+                logMsg: "Precipitation possible in 2-3 days, but tomorrow is clear.",
+            },
+            no: {
+                title: "No wash today",
+                body: `Snow or rain in a day.\n\n${forecastList}`,
+                tags: "car,x",
+                logMsg: "Precipitation expected tomorrow \u2014 skip the wash.",
+            },
+        };
+
+        const n = notifications[analysis.verdict];
+        log(n.logMsg);
+
+        if (settings.ntfyTopic) {
+            log("Sending notification to ntfy.sh/" + settings.ntfyTopic + "...");
+            await sendNtfyAlert(settings.ntfyTopic, n.title, n.body, n.tags);
+            log("Notification sent!");
         } else {
-            log("Precipitation expected \u2014 not a good time for a car wash.");
+            log("No ntfy topic configured \u2014 skipping notification.");
         }
     } catch (err) {
         log("Error: " + err.message);

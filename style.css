@@ -153,10 +153,16 @@ header h1 {
     border: 1px solid #bbf7d0;
 }
 
-.status-wait {
+.status-maybe {
     background: var(--amber-bg);
     color: var(--amber);
     border: 1px solid #fde68a;
+}
+
+.status-wait {
+    background: #fee2e2;
+    color: var(--red);
+    border: 1px solid #fecaca;
 }
 
 .hidden { display: none; }
