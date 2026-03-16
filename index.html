@@ -10,46 +10,16 @@
     <div class="container">
         <header>
             <h1>Car Wash Time</h1>
-            <p class="subtitle">Get notified when the weather is perfect for a car wash</p>
+            <p class="subtitle">Toronto forecast — should you wash your car?</p>
         </header>
 
-        <section class="settings-card">
-            <h2>Settings</h2>
-            <div class="form-group">
-                <label for="latitude">Latitude</label>
-                <input type="number" id="latitude" step="0.0001" placeholder="e.g. 40.7128">
-            </div>
-            <div class="form-group">
-                <label for="longitude">Longitude</label>
-                <input type="number" id="longitude" step="0.0001" placeholder="e.g. -74.0060">
-            </div>
-            <div class="form-group">
-                <label for="ntfy-topic">ntfy.sh Topic</label>
-                <input type="text" id="ntfy-topic" placeholder="e.g. my-carwash-alerts">
-                <small>Pick a unique topic name. Subscribe to it in the <a href="https://ntfy.sh" target="_blank">ntfy app</a>.</small>
-            </div>
-            <div class="form-group">
-                <label for="dry-days">Dry days required</label>
-                <select id="dry-days">
-                    <option value="2">2 days</option>
-                    <option value="3" selected>3 days</option>
-                    <option value="4">4 days</option>
-                </select>
-            </div>
-            <div class="button-row">
-                <button id="detect-location" class="btn btn-secondary">Detect My Location</button>
-                <button id="save-settings" class="btn btn-primary">Save Settings</button>
-            </div>
-        </section>
-
         <section class="forecast-card">
-            <h2>Forecast</h2>
             <div id="forecast-status" class="status-banner hidden"></div>
             <div id="forecast-grid" class="forecast-grid">
-                <p class="placeholder-text">Configure your location above and click "Check Now" to see the forecast.</p>
+                <p class="placeholder-text">Loading forecast...</p>
             </div>
             <div class="button-row">
-                <button id="check-now" class="btn btn-primary">Check Now</button>
+                <button id="check-now" class="btn btn-primary">Refresh</button>
                 <button id="send-test" class="btn btn-secondary">Send Test Notification</button>
             </div>
         </section>

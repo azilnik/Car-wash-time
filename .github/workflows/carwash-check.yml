@@ -2,22 +2,14 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # Run every day at 9:00 AM UTC
-    - cron: "0 9 * * *"
+    # 9:00 AM EST = 14:00 UTC (will be 10am during EDT)
+    - cron: "0 14 * * *"
   workflow_dispatch:
-    inputs:
-      latitude:
-        description: "Latitude (overrides secret)"
-        required: false
-      longitude:
-        description: "Longitude (overrides secret)"
-        required: false
 
 env:
-  LATITUDE: ${{ inputs.latitude || secrets.LATITUDE }}
-  LONGITUDE: ${{ inputs.longitude || secrets.LONGITUDE }}
-  NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-
+  LATITUDE: "43.7232"
+  LONGITUDE: "-79.4331"
+  NTFY_TOPIC: "zilnik-carwash-uTPEjc0f2q8uuKbP"
 
 jobs:
   check-weather:
@@ -27,16 +19,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ -z "${LATITUDE:-}" ] || [ -z "${LONGITUDE:-}" ]; then
-            echo "::error::LATITUDE and LONGITUDE secrets must be set."
-            exit 1
-          fi
-
-          if [ -z "${NTFY_TOPIC:-}" ]; then
-            echo "::error::NTFY_TOPIC secret must be set."
-            exit 1
-          fi
 
           echo "Fetching forecast for ($LATITUDE, $LONGITUDE)..."
 
@@ -85,7 +67,7 @@ jobs:
           # Three-tier verdict
           if [ "$TOMORROW_WET" = true ]; then
             TITLE="No wash today"
-            BODY="Snow or rain in a day."
+            BODY="Precipitation expected tomorrow."
             TAGS="car,x"
           elif [ "$ANY_WET" = true ]; then
             TITLE="Maybe worth a wash"
@@ -93,7 +75,7 @@ jobs:
             TAGS="car,thinking"
           else
             TITLE="Good day for a car wash!"
-            BODY="Nothing for 3 days."
+            BODY="No precipitation for 3 days."
             TAGS="car,white_check_mark"
           fi
 

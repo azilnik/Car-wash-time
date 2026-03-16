@@ -1,4 +1,9 @@
-// ── Constants ──────────────────────────────────────────────────────
+// ── Config (hardcoded) ─────────────────────────────────────────────
+const LATITUDE = 43.7232;
+const LONGITUDE = -79.4331;
+const NTFY_TOPIC = "zilnik-carwash-uTPEjc0f2q8uuKbP";
+const DRY_DAYS = 3;
+
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const NTFY_URL = "https://ntfy.sh";
 
@@ -17,33 +22,6 @@ const PRECIPITATION_CODES = new Set([
     96, 99,           // thunderstorm with hail
 ]);
 
-// ── Settings helpers ───────────────────────────────────────────────
-function loadSettings() {
-    const raw = localStorage.getItem("carwash-settings");
-    return raw ? JSON.parse(raw) : null;
-}
-
-function saveSettings(settings) {
-    localStorage.setItem("carwash-settings", JSON.stringify(settings));
-}
-
-function readFormSettings() {
-    return {
-        latitude: parseFloat(document.getElementById("latitude").value),
-        longitude: parseFloat(document.getElementById("longitude").value),
-        ntfyTopic: document.getElementById("ntfy-topic").value.trim(),
-        dryDays: parseInt(document.getElementById("dry-days").value, 10),
-    };
-}
-
-function populateForm(settings) {
-    if (!settings) return;
-    document.getElementById("latitude").value = settings.latitude || "";
-    document.getElementById("longitude").value = settings.longitude || "";
-    document.getElementById("ntfy-topic").value = settings.ntfyTopic || "";
-    document.getElementById("dry-days").value = settings.dryDays || 3;
-}
-
 // ── Logging ────────────────────────────────────────────────────────
 function log(message) {
     const el = document.getElementById("log-output");
@@ -52,7 +30,6 @@ function log(message) {
     entry.className = "log-entry";
     entry.textContent = `[${ts}] ${message}`;
 
-    // Remove placeholder if present
     const placeholder = el.querySelector(".placeholder-text");
     if (placeholder) placeholder.remove();
 
@@ -60,10 +37,10 @@ function log(message) {
 }
 
 // ── Weather fetching ───────────────────────────────────────────────
-async function fetchForecast(lat, lon) {
+async function fetchForecast() {
     const params = new URLSearchParams({
-        latitude: lat,
-        longitude: lon,
+        latitude: LATITUDE,
+        longitude: LONGITUDE,
         daily: "weather_code,precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min",
         timezone: "auto",
         forecast_days: 7,
@@ -75,7 +52,7 @@ async function fetchForecast(lat, lon) {
 }
 
 // ── Precipitation analysis ─────────────────────────────────────────
-function analyzeForecast(data, dryDays) {
+function analyzeForecast(data) {
     const daily = data.daily;
     const results = [];
 
@@ -96,17 +73,12 @@ function analyzeForecast(data, dryDays) {
         });
     }
 
-    // Check the next 3 days (skip today = index 0, look at 1..3)
-    const windowEnd = Math.min(4, results.length);
+    const windowEnd = Math.min(DRY_DAYS + 1, results.length);
     const window = results.slice(1, windowEnd);
 
     const tomorrowWet = window.length > 0 && window[0].isPrecipitation;
     const anyWet = window.some((d) => d.isPrecipitation);
 
-    // Three-tier verdict:
-    //   "good"  = no precip for 3 days
-    //   "maybe" = precip in days 2-3 but not tomorrow
-    //   "no"    = precip tomorrow
     let verdict;
     if (tomorrowWet) {
         verdict = "no";
@@ -156,14 +128,14 @@ function dayName(dateStr) {
     return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
-function renderForecast(analysis, dryDays) {
+function renderForecast(analysis) {
     const grid = document.getElementById("forecast-grid");
     const status = document.getElementById("forecast-status");
     grid.innerHTML = "";
 
     analysis.days.forEach((day, i) => {
         const card = document.createElement("div");
-        const inWindow = i >= 1 && i <= dryDays;
+        const inWindow = i >= 1 && i <= DRY_DAYS;
         card.className = `forecast-day${day.isPrecipitation ? " wet" : " dry"}${inWindow ? " in-window" : ""}`;
         card.innerHTML = `
             <div class="day-name">${dayName(day.date)}</div>
@@ -179,19 +151,19 @@ function renderForecast(analysis, dryDays) {
     status.classList.remove("hidden", "status-go", "status-maybe", "status-wait");
     if (analysis.verdict === "good") {
         status.className = "status-banner status-go";
-        status.textContent = "Good day for a car wash! Nothing for 3 days.";
+        status.textContent = "Good day for a car wash! No precipitation for 3 days.";
     } else if (analysis.verdict === "maybe") {
         status.className = "status-banner status-maybe";
         status.textContent = "Maybe worth a wash \u2014 possible rain or snow in 3 days.";
     } else {
         status.className = "status-banner status-wait";
-        status.textContent = "No wash \u2014 snow or rain in a day.";
+        status.textContent = "No wash \u2014 precipitation expected tomorrow.";
     }
 }
 
 // ── ntfy.sh notifications ──────────────────────────────────────────
-async function sendNtfyAlert(topic, title, message, tags) {
-    const res = await fetch(`${NTFY_URL}/${encodeURIComponent(topic)}`, {
+async function sendNtfyAlert(title, message, tags) {
+    const res = await fetch(`${NTFY_URL}/${encodeURIComponent(NTFY_TOPIC)}`, {
         method: "POST",
         headers: {
             Title: title,
@@ -205,17 +177,11 @@ async function sendNtfyAlert(topic, title, message, tags) {
 
 // ── Main check logic ───────────────────────────────────────────────
 async function runCheck() {
-    const settings = loadSettings();
-    if (!settings || !settings.latitude || !settings.longitude) {
-        log("Please configure your location first.");
-        return;
-    }
-
     log("Fetching forecast...");
     try {
-        const data = await fetchForecast(settings.latitude, settings.longitude);
-        const analysis = analyzeForecast(data, settings.dryDays || 3);
-        renderForecast(analysis, settings.dryDays || 3);
+        const data = await fetchForecast();
+        const analysis = analyzeForecast(data);
+        renderForecast(analysis);
 
         const forecastList = analysis.checkedDays
             .map((d) => `${dayName(d.date)}: ${weatherDescriptions[d.weatherCode] || "Clear"} (${d.precipProb}% chance)`)
@@ -224,7 +190,7 @@ async function runCheck() {
         const notifications = {
             good: {
                 title: "Good day for a car wash!",
-                body: `Nothing for 3 days.\n\n${forecastList}`,
+                body: `No precipitation for 3 days.\n\n${forecastList}`,
                 tags: "car,white_check_mark",
                 logMsg: "All clear for 3 days!",
             },
@@ -236,7 +202,7 @@ async function runCheck() {
             },
             no: {
                 title: "No wash today",
-                body: `Snow or rain in a day.\n\n${forecastList}`,
+                body: `Precipitation expected tomorrow.\n\n${forecastList}`,
                 tags: "car,x",
                 logMsg: "Precipitation expected tomorrow \u2014 skip the wash.",
             },
@@ -244,14 +210,6 @@ async function runCheck() {
 
         const n = notifications[analysis.verdict];
         log(n.logMsg);
-
-        if (settings.ntfyTopic) {
-            log("Sending notification to ntfy.sh/" + settings.ntfyTopic + "...");
-            await sendNtfyAlert(settings.ntfyTopic, n.title, n.body, n.tags);
-            log("Notification sent!");
-        } else {
-            log("No ntfy topic configured \u2014 skipping notification.");
-        }
     } catch (err) {
         log("Error: " + err.message);
     }
@@ -259,54 +217,15 @@ async function runCheck() {
 
 // ── Event listeners ────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-    populateForm(loadSettings());
+    runCheck();
 
-    document.getElementById("save-settings").addEventListener("click", () => {
-        const settings = readFormSettings();
-        if (isNaN(settings.latitude) || isNaN(settings.longitude)) {
-            log("Please enter valid latitude and longitude.");
-            return;
-        }
-        saveSettings(settings);
-        log("Settings saved.");
-    });
-
-    document.getElementById("detect-location").addEventListener("click", () => {
-        if (!navigator.geolocation) {
-            log("Geolocation is not supported by your browser.");
-            return;
-        }
-        log("Detecting location...");
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                document.getElementById("latitude").value = pos.coords.latitude.toFixed(4);
-                document.getElementById("longitude").value = pos.coords.longitude.toFixed(4);
-                log(`Location detected: ${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`);
-            },
-            (err) => log("Location error: " + err.message)
-        );
-    });
-
-    document.getElementById("check-now").addEventListener("click", () => {
-        const settings = readFormSettings();
-        if (isNaN(settings.latitude) || isNaN(settings.longitude)) {
-            log("Please enter valid latitude and longitude.");
-            return;
-        }
-        saveSettings(settings);
-        runCheck();
-    });
+    document.getElementById("check-now").addEventListener("click", runCheck);
 
     document.getElementById("send-test").addEventListener("click", async () => {
-        const topic = document.getElementById("ntfy-topic").value.trim();
-        if (!topic) {
-            log("Please enter a ntfy topic first.");
-            return;
-        }
         log("Sending test notification...");
         try {
-            await sendNtfyAlert(topic, "Test from Car Wash Time", "If you see this, notifications are working!", "white_check_mark");
-            log("Test notification sent to ntfy.sh/" + topic);
+            await sendNtfyAlert("Test from Car Wash Time", "If you see this, notifications are working!", "white_check_mark");
+            log("Test notification sent!");
         } catch (err) {
             log("Error sending test: " + err.message);
         }
