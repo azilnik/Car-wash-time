@@ -20,6 +20,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Reverse geocode to get city name
+          LOCATION=$(curl -sf \
+            -H "User-Agent: CarWashTime/1.0" \
+            "https://nominatim.openstreetmap.org/reverse?lat=${LATITUDE}&lon=${LONGITUDE}&format=json&zoom=10" \
+            | jq -r '.address.city // .address.town // .address.village // "Unknown"')
+          echo "Location: $LOCATION"
+
           echo "Fetching forecast for ($LATITUDE, $LONGITUDE)..."
 
           RESPONSE=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
@@ -66,15 +73,15 @@ jobs:
 
           # Three-tier verdict
           if [ "$TOMORROW_WET" = true ]; then
-            TITLE="No wash today"
+            TITLE="${LOCATION}: No wash today"
             BODY="Precipitation expected tomorrow."
             TAGS="car,x"
           elif [ "$ANY_WET" = true ]; then
-            TITLE="Maybe worth a wash"
+            TITLE="${LOCATION}: Maybe worth a wash"
             BODY="Possible rain or snow in 3 days."
             TAGS="car,thinking"
           else
-            TITLE="Good day for a car wash!"
+            TITLE="${LOCATION}: Good day for a car wash!"
             BODY="No precipitation for 3 days."
             TAGS="car,white_check_mark"
           fi
