@@ -4,6 +4,8 @@ on:
   schedule:
     # 8:00 AM EST = 13:00 UTC (will be 9am during EDT)
     - cron: "0 13 * * *"
+    # 9:30 PM EST = 02:30 UTC (will be 10:30pm during EDT)
+    - cron: "30 2 * * *"
   workflow_dispatch:
 
 env:
@@ -71,17 +73,25 @@ jobs:
             echo "$DATE: code=$CODE precip=${PRECIP}mm prob=${PROB}% [$STATUS]"
           done
 
+          # Determine if this is a morning or evening run (13:00 UTC = morning, 02:30 UTC = evening)
+          HOUR_UTC=$(date -u +%H)
+          if [ "$HOUR_UTC" -ge 10 ]; then
+            TIME_LABEL="today"
+          else
+            TIME_LABEL="tomorrow"
+          fi
+
           # Three-tier verdict
           if [ "$TOMORROW_WET" = true ]; then
-            TITLE="${LOCATION}: No wash today"
+            TITLE="${LOCATION}: No wash ${TIME_LABEL}"
             BODY="Precipitation expected tomorrow."
             TAGS="car,x"
           elif [ "$ANY_WET" = true ]; then
-            TITLE="${LOCATION}: Maybe worth a wash"
+            TITLE="${LOCATION}: Maybe worth a wash ${TIME_LABEL}"
             BODY="Possible rain or snow in 3 days."
             TAGS="car,thinking"
           else
-            TITLE="${LOCATION}: Good day for a car wash!"
+            TITLE="${LOCATION}: Good day for a car wash ${TIME_LABEL}!"
             BODY="No precipitation for 3 days."
             TAGS="car,white_check_mark"
           fi
