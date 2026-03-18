@@ -2,10 +2,10 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # 6:00 AM EST = 11:00 UTC (will be 7:00am during EDT)
-    - cron: "0 11 * * *"
-    # 9:30 PM EST = 02:30 UTC (will be 10:30pm during EDT)
-    - cron: "30 2 * * *"
+    # 5:30 AM EST = 10:30 UTC (will be 6:30am during EDT), Mon-Fri only
+    - cron: "30 10 * * 1-5"
+    # 9:30 PM EST = 02:30 UTC next day (will be 10:30pm during EDT), Sun-Thu evenings (Mon-Fri UTC)
+    - cron: "30 2 * * 1-5"
   workflow_dispatch:
 
 env:
