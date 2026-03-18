@@ -8,7 +8,7 @@ So I built this. It checks the forecast and sends a push notification to my phon
 
 ## How It Works
 
-Twice a day — early morning and evening — a GitHub Actions workflow:
+On weekdays at 5:30 AM and most evenings (Sunday–Thursday at 9:30 PM), a GitHub Actions workflow:
 
 1. Fetches the 3-day forecast from the [Open-Meteo API](https://open-meteo.com/)
 2. Checks for rain, snow, drizzle, freezing rain, or thunderstorms using WMO weather codes
@@ -20,7 +20,7 @@ Twice a day — early morning and evening — a GitHub Actions workflow:
 | **Maybe worth a wash** | Today looks dry, but rain is coming. Your call. |
 | **Skip it** | Rain tomorrow. Save your $15. |
 
-The morning notification hits before school dropoff, so I know whether to stop or keep driving.
+The morning notification hits before school dropoff (Monday–Friday), so I know whether to stop or keep driving. No notifications on Saturday — the Sunday evening alert is the only weekend notification, giving a heads-up for Monday morning.
 
 ## The Constraints (a.k.a. the fun part)
 
@@ -43,7 +43,7 @@ The morning notification hits before school dropoff, so I know whether to stop o
 
 1. Install the [ntfy app](https://ntfy.sh) (Android / iOS)
 2. Subscribe to the topic listed in the workflow file
-3. That's it. You'll get a notification before your morning commute.
+3. That's it. You'll get notifications on weekday mornings (5:30 AM EST) and Sunday–Thursday evenings (9:30 PM EST).
 
 ---
 
