@@ -5,10 +5,10 @@ const NTFY_TOPIC = "zilnik-carwash-uTPEjc0f2q8uuKbP";
 const DRY_DAYS = 3;
 
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
+const AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
 const NTFY_URL = "https://ntfy.sh";
 
 // WMO weather codes that indicate precipitation
-// https://open-meteo.com/en/docs#weathervariables
 const PRECIPITATION_CODES = new Set([
     51, 53, 55,       // drizzle (light, moderate, dense)
     56, 57,           // freezing drizzle
@@ -41,7 +41,7 @@ async function fetchForecast() {
     const params = new URLSearchParams({
         latitude: LATITUDE,
         longitude: LONGITUDE,
-        daily: "weather_code,precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min",
+        daily: "weather_code,precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,uv_index_max",
         timezone: "auto",
         forecast_days: 7,
     });
@@ -51,8 +51,33 @@ async function fetchForecast() {
     return res.json();
 }
 
+async function fetchAirQuality() {
+    try {
+        const params = new URLSearchParams({
+            latitude: LATITUDE,
+            longitude: LONGITUDE,
+            current: "us_aqi,pm2_5,pm10",
+            forecast_days: 1,
+        });
+        const res = await fetch(`${AIR_QUALITY_URL}?${params}`);
+        if (!res.ok) return null;
+        return res.json();
+    } catch {
+        return null;
+    }
+}
+
+// ── Season detection ──────────────────────────────────────────────
+function getSeason() {
+    const month = new Date().getMonth() + 1;
+    if (month >= 3 && month <= 5) return { name: "Spring", note: "Pollen season — cars get coated fast" };
+    if (month >= 6 && month <= 8) return { name: "Summer", note: "Dust, bugs, and UV bake dirt onto paint" };
+    if (month >= 9 && month <= 11) return { name: "Fall", note: "Tree sap, leaves, and early frost" };
+    return { name: "Winter", note: "Road salt is the main enemy" };
+}
+
 // ── Precipitation analysis ─────────────────────────────────────────
-function analyzeForecast(data) {
+function analyzeForecast(data, airQuality) {
     const daily = data.daily;
     const results = [];
 
@@ -69,6 +94,8 @@ function analyzeForecast(data) {
             precipProb: daily.precipitation_probability_max[i],
             tempMax: daily.temperature_2m_max[i],
             tempMin: daily.temperature_2m_min[i],
+            windMax: daily.wind_speed_10m_max[i],
+            uvMax: daily.uv_index_max[i],
             isPrecipitation: isPrecip,
         });
     }
@@ -79,6 +106,20 @@ function analyzeForecast(data) {
     const tomorrowWet = window.length > 0 && window[0].isPrecipitation;
     const anyWet = window.some((d) => d.isPrecipitation);
 
+    // Find best wash window in 7-day forecast
+    let bestWindow = null;
+    for (let i = 1; i < results.length; i++) {
+        if (!results[i].isPrecipitation) {
+            let dryStreak = 1;
+            for (let j = i + 1; j < results.length && !results[j].isPrecipitation; j++) {
+                dryStreak++;
+            }
+            if (!bestWindow || dryStreak > bestWindow.streak) {
+                bestWindow = { day: results[i].date, streak: dryStreak, index: i };
+            }
+        }
+    }
+
     let verdict;
     if (tomorrowWet) {
         verdict = "no";
@@ -88,7 +129,44 @@ function analyzeForecast(data) {
         verdict = "good";
     }
 
-    return { days: results, verdict, checkedDays: window };
+    const season = getSeason();
+
+    return { days: results, verdict, checkedDays: window, bestWindow, season, airQuality };
+}
+
+// ── Verdict message generation ────────────────────────────────────
+function getVerdictMessage(analysis) {
+    const { verdict, bestWindow, season, checkedDays } = analysis;
+    const dayOfWeek = new Date().getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const isFriday = dayOfWeek === 5;
+
+    if (verdict === "good") {
+        let msg = "Clear skies ahead — great time to wash.";
+        if (bestWindow && bestWindow.streak >= 4) {
+            msg = `${bestWindow.streak}-day dry stretch ahead. Perfect wash window.`;
+        }
+        if (isFriday) msg += " Fresh ride for the weekend!";
+        if (season.name === "Spring") msg += " Pollen's been building up.";
+        if (season.name === "Winter") msg += " Rinse off that road salt.";
+        return msg;
+    } else if (verdict === "maybe") {
+        const wetDay = checkedDays.find(d => d.isPrecipitation);
+        const wetDayName = wetDay ? dayName(wetDay.date) : "later this week";
+        let msg = `Rain possible ${wetDayName}, but today's dry.`;
+        if (bestWindow) {
+            msg += ` Best window: ${dayName(bestWindow.day)}.`;
+        }
+        return msg;
+    } else {
+        const precip = checkedDays[0];
+        const desc = weatherDescriptions[precip?.weatherCode] || "precipitation";
+        let msg = `${desc} expected tomorrow — skip the wash.`;
+        if (bestWindow) {
+            msg += ` Try ${dayName(bestWindow.day)} instead.`;
+        }
+        return msg;
+    }
 }
 
 // ── UI rendering ───────────────────────────────────────────────────
@@ -142,23 +220,42 @@ function renderForecast(analysis) {
             <div class="day-icon">${weatherIcons[day.weatherCode] || "\u2753"}</div>
             <div class="day-desc">${weatherDescriptions[day.weatherCode] || "Unknown"}</div>
             <div class="day-temp">${Math.round(day.tempMax)}\u00B0 / ${Math.round(day.tempMin)}\u00B0</div>
-            <div class="day-precip">Precip: ${day.precipSum.toFixed(1)} mm (${day.precipProb}%)</div>
+            <div class="day-details">
+                <span title="Precipitation">${day.precipSum.toFixed(1)}mm (${day.precipProb}%)</span>
+                <span title="Wind">${Math.round(day.windMax)} km/h</span>
+                <span title="UV Index">UV ${day.uvMax.toFixed(0)}</span>
+            </div>
             ${day.isPrecipitation ? '<span class="badge badge-wet">Wet</span>' : '<span class="badge badge-dry">Dry</span>'}
         `;
         grid.appendChild(card);
     });
 
+    // Render air quality if available
+    const aqiEl = document.getElementById("aqi-display");
+    if (aqiEl && analysis.airQuality?.current) {
+        const aqi = analysis.airQuality.current;
+        const aqiLevel = aqi.us_aqi <= 50 ? "Good" : aqi.us_aqi <= 100 ? "Moderate" : "Unhealthy";
+        aqiEl.innerHTML = `AQI: ${aqi.us_aqi} (${aqiLevel}) &middot; PM2.5: ${aqi.pm2_5}`;
+        aqiEl.className = `aqi-display aqi-${aqiLevel.toLowerCase()}`;
+    }
+
+    // Render season info
+    const seasonEl = document.getElementById("season-display");
+    if (seasonEl) {
+        seasonEl.textContent = `${analysis.season.name} \u2014 ${analysis.season.note}`;
+    }
+
+    // Render verdict with natural language
+    const verdictMsg = getVerdictMessage(analysis);
     status.classList.remove("hidden", "status-go", "status-maybe", "status-wait");
     if (analysis.verdict === "good") {
         status.className = "status-banner status-go";
-        status.textContent = "Good day for a car wash! No precipitation for 3 days.";
     } else if (analysis.verdict === "maybe") {
         status.className = "status-banner status-maybe";
-        status.textContent = "Maybe worth a wash \u2014 possible rain or snow in 3 days.";
     } else {
         status.className = "status-banner status-wait";
-        status.textContent = "No wash \u2014 precipitation expected tomorrow.";
     }
+    status.textContent = verdictMsg;
 }
 
 // ── ntfy.sh notifications ──────────────────────────────────────────
@@ -177,39 +274,17 @@ async function sendNtfyAlert(title, message, tags) {
 
 // ── Main check logic ───────────────────────────────────────────────
 async function runCheck() {
-    log("Fetching forecast...");
+    log("Fetching forecast and air quality...");
     try {
-        const data = await fetchForecast();
-        const analysis = analyzeForecast(data);
+        const [data, airQuality] = await Promise.all([
+            fetchForecast(),
+            fetchAirQuality(),
+        ]);
+        const analysis = analyzeForecast(data, airQuality);
         renderForecast(analysis);
 
-        const forecastList = analysis.checkedDays
-            .map((d) => `${dayName(d.date)}: ${weatherDescriptions[d.weatherCode] || "Clear"} (${d.precipProb}% chance)`)
-            .join("\n");
-
-        const notifications = {
-            good: {
-                title: "Good day for a car wash!",
-                body: `No precipitation for 3 days.\n\n${forecastList}`,
-                tags: "car,white_check_mark",
-                logMsg: "All clear for 3 days!",
-            },
-            maybe: {
-                title: "Maybe worth a wash",
-                body: `Possible rain or snow in 3 days.\n\n${forecastList}`,
-                tags: "car,thinking",
-                logMsg: "Precipitation possible in 2-3 days, but tomorrow is clear.",
-            },
-            no: {
-                title: "No wash today",
-                body: `Precipitation expected tomorrow.\n\n${forecastList}`,
-                tags: "car,x",
-                logMsg: "Precipitation expected tomorrow \u2014 skip the wash.",
-            },
-        };
-
-        const n = notifications[analysis.verdict];
-        log(n.logMsg);
+        const verdictMsg = getVerdictMessage(analysis);
+        log(verdictMsg);
     } catch (err) {
         log("Error: " + err.message);
     }
@@ -224,7 +299,11 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("send-test").addEventListener("click", async () => {
         log("Sending test notification...");
         try {
-            await sendNtfyAlert("Test from Car Wash Time", "If you see this, notifications are working!", "white_check_mark");
+            await sendNtfyAlert(
+                "Car Wash Time \u2014 Test",
+                "If you see this, your AI-powered car wash notifications are working!",
+                "car,white_check_mark"
+            );
             log("Test notification sent!");
         } catch (err) {
             log("Error sending test: " + err.message);

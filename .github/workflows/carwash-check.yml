@@ -1,4 +1,4 @@
-name: Daily Car Wash Check
+name: AI Car Wash Check
 
 on:
   schedule:
@@ -7,6 +7,9 @@ on:
     # 9:30 PM EST = 02:30 UTC (will be 10:30pm during EDT)
     - cron: "30 2 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   LATITUDE: "43.7232"
@@ -17,92 +20,312 @@ jobs:
   check-weather:
     runs-on: ubuntu-latest
     steps:
-      - name: Check weather and notify
+      - name: Checkout repo (for state file)
+        uses: actions/checkout@v4
+
+      - name: Fetch weather data and run AI analysis
         shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
 
-          # Reverse geocode to get city name
+          # ── 1. Reverse geocode to get city name ────────────────────────
           LOCATION=$(curl -sf \
-            -H "User-Agent: CarWashTime/1.0" \
+            -H "User-Agent: CarWashTime/2.0" \
             "https://nominatim.openstreetmap.org/reverse?lat=${LATITUDE}&lon=${LONGITUDE}&format=json&zoom=10" \
             | jq -r '.address.city // .address.town // .address.village // "Unknown"')
           echo "Location: $LOCATION"
 
-          echo "Fetching forecast for ($LATITUDE, $LONGITUDE)..."
+          # ── 2. Fetch all weather data (parallel) ───────────────────────
+          echo "Fetching weather data..."
 
-          RESPONSE=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
+          # 7-day daily forecast (expanded fields)
+          DAILY_FORECAST=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
           latitude=${LATITUDE}&longitude=${LONGITUDE}\
-          &daily=weather_code,precipitation_sum,precipitation_probability_max\
+          &daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,uv_index_max\
           &timezone=auto&forecast_days=7")
 
-          echo "Parsing forecast..."
+          # 48-hour hourly forecast
+          HOURLY_FORECAST=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
+          latitude=${LATITUDE}&longitude=${LONGITUDE}\
+          &hourly=precipitation,precipitation_probability,temperature_2m,weather_code\
+          &timezone=auto&forecast_hours=48")
 
-          # Precipitation WMO codes
-          PRECIP_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82 85 86 95 96 99"
+          # Past 7 days historical weather
+          PAST_WEEK=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
+          latitude=${LATITUDE}&longitude=${LONGITUDE}\
+          &daily=weather_code,precipitation_sum,temperature_2m_max\
+          &timezone=auto&past_days=7&forecast_days=0")
 
-          TOMORROW_WET=false
-          ANY_WET=false
-          FORECAST_SUMMARY=""
+          # Air quality
+          AIR_QUALITY=$(curl -sf "https://air-quality-api.open-meteo.com/v1/air-quality?\
+          latitude=${LATITUDE}&longitude=${LONGITUDE}\
+          &current=us_aqi,pm2_5,pm10\
+          &forecast_days=1" 2>/dev/null || echo '{"current":{"us_aqi":null,"pm2_5":null,"pm10":null}}')
 
-          for i in 1 2 3; do
-            DATE=$(echo "$RESPONSE"      | jq -r ".daily.time[$i]")
-            CODE=$(echo "$RESPONSE"      | jq -r ".daily.weather_code[$i]")
-            PRECIP=$(echo "$RESPONSE"    | jq -r ".daily.precipitation_sum[$i]")
-            PROB=$(echo "$RESPONSE"      | jq -r ".daily.precipitation_probability_max[$i]")
+          echo "All weather data fetched."
 
-            IS_WET=false
-            for pc in $PRECIP_CODES; do
-              if [ "$CODE" = "$pc" ]; then IS_WET=true; break; fi
-            done
+          # ── 3. Read state file ─────────────────────────────────────────
+          STATE_FILE="data/state.json"
+          if [ -f "$STATE_FILE" ]; then
+            STATE=$(cat "$STATE_FILE")
+          else
+            STATE='{"last_notification_at":null,"last_verdict":null,"last_message_hash":null,"last_message":null,"consecutive_skips":0}'
+          fi
 
-            PRECIP_INT=$(echo "$PRECIP" | cut -d. -f1)
-            if [ "${PRECIP_INT:-0}" -gt 0 ] || [ "${PROB:-0}" -gt 30 ]; then
-              IS_WET=true
-            fi
+          LAST_NOTIF_AT=$(echo "$STATE" | jq -r '.last_notification_at // "never"')
+          LAST_VERDICT=$(echo "$STATE" | jq -r '.last_verdict // "none"')
+          LAST_MESSAGE=$(echo "$STATE" | jq -r '.last_message // "none"')
+          CONSECUTIVE_SKIPS=$(echo "$STATE" | jq -r '.consecutive_skips // 0')
 
-            if [ "$IS_WET" = true ]; then
-              ANY_WET=true
-              if [ "$i" = 1 ]; then TOMORROW_WET=true; fi
-            fi
+          # Calculate days since last notification
+          if [ "$LAST_NOTIF_AT" = "never" ] || [ "$LAST_NOTIF_AT" = "null" ]; then
+            DAYS_SINCE_NOTIF="never (first run)"
+          else
+            LAST_EPOCH=$(date -d "$LAST_NOTIF_AT" +%s 2>/dev/null || echo 0)
+            NOW_EPOCH=$(date +%s)
+            DAYS_SINCE_NOTIF=$(( (NOW_EPOCH - LAST_EPOCH) / 86400 ))
+          fi
 
-            STATUS="Dry"
-            [ "$IS_WET" = true ] && STATUS="Wet"
+          # ── 4. Determine context ──────────────────────────────────────
+          DAY_OF_WEEK=$(date +%A)
+          TODAY_DATE=$(date +%Y-%m-%d)
+          MONTH=$(date +%m)
 
-            FORECAST_SUMMARY="${FORECAST_SUMMARY}${DATE}: code=${CODE} precip=${PRECIP}mm prob=${PROB}% [${STATUS}]\n"
-            echo "$DATE: code=$CODE precip=${PRECIP}mm prob=${PROB}% [$STATUS]"
-          done
+          case $MONTH in
+            03|04|05) SEASON="spring — pollen is high, rain washes off winter grime, mud splashes common" ;;
+            06|07|08) SEASON="summer — dust, bugs, bird droppings, high UV bakes dirt onto paint" ;;
+            09|10|11) SEASON="fall — tree sap, falling leaves, early frost, rain picks up" ;;
+            12|01|02) SEASON="winter — road salt is the main enemy, slush, freezing temps make washing tricky" ;;
+          esac
 
-          # Determine if this is a morning or evening run (13:00 UTC = morning, 02:30 UTC = evening)
+          # Morning or evening context
           HOUR_UTC=$(date -u +%H)
           if [ "$HOUR_UTC" -ge 10 ]; then
-            TIME_LABEL="today"
+            TIME_CONTEXT="morning check — user is about to drive past the car wash on school dropoff"
           else
-            TIME_LABEL="tomorrow"
+            TIME_CONTEXT="evening check — planning for tomorrow morning's drive"
           fi
 
-          # Three-tier verdict
-          if [ "$TOMORROW_WET" = true ]; then
-            TITLE="${LOCATION}: No wash ${TIME_LABEL}"
-            BODY="Precipitation expected tomorrow."
-            TAGS="car,x"
-          elif [ "$ANY_WET" = true ]; then
-            TITLE="${LOCATION}: Maybe worth a wash ${TIME_LABEL}"
-            BODY="Possible rain or snow in 3 days."
-            TAGS="car,thinking"
-          else
-            TITLE="${LOCATION}: Good day for a car wash ${TIME_LABEL}!"
-            BODY="No precipitation for 3 days."
-            TAGS="car,white_check_mark"
+          # ── 5. Build compact weather summaries ─────────────────────────
+          # Daily forecast summary (compact)
+          DAILY_SUMMARY=$(echo "$DAILY_FORECAST" | jq -r '
+            .daily | to_entries | .[0].value | length as $len |
+            [range($len)] | map(
+              {
+                date: (.daily.time[.] // null),
+                code: (.daily.weather_code[.] // null),
+                temp_max: (.daily.temperature_2m_max[.] // null),
+                temp_min: (.daily.temperature_2m_min[.] // null),
+                precip_mm: (.daily.precipitation_sum[.] // null),
+                precip_prob: (.daily.precipitation_probability_max[.] // null),
+                wind_max_kmh: (.daily.wind_speed_10m_max[.] // null),
+                uv_max: (.daily.uv_index_max[.] // null)
+              }
+            )' 2>/dev/null || echo "$DAILY_FORECAST" | jq '{
+              dates: .daily.time,
+              weather_codes: .daily.weather_code,
+              temp_max: .daily.temperature_2m_max,
+              temp_min: .daily.temperature_2m_min,
+              precip_mm: .daily.precipitation_sum,
+              precip_prob_pct: .daily.precipitation_probability_max,
+              wind_max_kmh: .daily.wind_speed_10m_max,
+              uv_max: .daily.uv_index_max
+            }')
+
+          # Hourly summary — just first 48 hours, condensed into 6h blocks
+          HOURLY_SUMMARY=$(echo "$HOURLY_FORECAST" | jq '{
+            times: [.hourly.time[:48]],
+            precip_mm: [.hourly.precipitation[:48]],
+            precip_prob: [.hourly.precipitation_probability[:48]],
+            temps: [.hourly.temperature_2m[:48]]
+          }' 2>/dev/null || echo "hourly data unavailable")
+
+          # Past week summary
+          PAST_SUMMARY=$(echo "$PAST_WEEK" | jq '{
+            dates: .daily.time,
+            weather_codes: .daily.weather_code,
+            precip_mm: .daily.precipitation_sum,
+            temp_max: .daily.temperature_2m_max
+          }' 2>/dev/null || echo "historical data unavailable")
+
+          # Air quality
+          AQI=$(echo "$AIR_QUALITY" | jq -r '.current.us_aqi // "unavailable"')
+          PM25=$(echo "$AIR_QUALITY" | jq -r '.current.pm2_5 // "unavailable"')
+
+          # ── 6. Build AI prompt ─────────────────────────────────────────
+          PROMPT=$(cat <<PROMPT_EOF
+          You are a car wash advisor for someone in ${LOCATION}. You check the weather twice daily and decide whether to send them a push notification about washing their car. They drive past a \$15 car wash every morning during school dropoff.
+
+          TODAY: ${TODAY_DATE} (${DAY_OF_WEEK})
+          TIME: ${TIME_CONTEXT}
+          SEASON: ${SEASON}
+
+          7-DAY FORECAST:
+          ${DAILY_SUMMARY}
+
+          NEXT 48 HOURS (hourly):
+          ${HOURLY_SUMMARY}
+
+          PAST 7 DAYS:
+          ${PAST_SUMMARY}
+
+          AIR QUALITY: AQI=${AQI}, PM2.5=${PM25}
+
+          NOTIFICATION STATE:
+          - Days since last notification: ${DAYS_SINCE_NOTIF}
+          - Last verdict: ${LAST_VERDICT}
+          - Last message sent: ${LAST_MESSAGE}
+          - Consecutive checks skipped (no notification): ${CONSECUTIVE_SKIPS}
+
+          DECISION RULES:
+          - Only notify if there is genuinely useful, actionable info
+          - Notify if: a good wash window opened, weather shifted meaningfully, it has been 5+ days since last ping, or there is a time-sensitive opportunity
+          - Stay silent if: conditions are unchanged from last notification, forecast is ambiguous, or a notification was sent recently with the same verdict
+          - If consecutive_skips >= 10, lean toward sending a brief status update
+          - Consider seasonal factors (spring pollen buildup, winter salt damage, etc.)
+          - Consider day of week (Friday/Saturday = good wash days for weekend)
+          - Consider the hourly forecast — morning rain that clears by noon is different than all-day rain
+
+          Write a notification that sounds like a knowledgeable friend texting. Short, casual, helpful. 2-4 sentences max. Include the key reasoning (why now, what is coming). No weather codes or technical data — just plain language.
+
+          For tags: pick from car paired with one of: sparkles, white_check_mark, sun_with_face, umbrella, x, thinking, snowflake, warning, calendar, droplet
+
+          Respond with ONLY valid JSON, no markdown fencing, no explanation:
+          {"should_notify": true or false, "title": "short title (under 60 chars)", "message": "the notification body", "tags": "car,emoji_tag", "verdict": "good/maybe/skip/info", "reasoning": "one-line internal reasoning for logs"}
+          PROMPT_EOF
+          )
+
+          # ── 7. Call Claude API ─────────────────────────────────────────
+          echo "Calling Claude API..."
+
+          AI_RESPONSE=$(curl -s --max-time 30 \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$(jq -n --arg prompt "$PROMPT" '{
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 400,
+              messages: [{role: "user", content: $prompt}]
+            }')" \
+            "https://api.anthropic.com/v1/messages" 2>/dev/null)
+
+          # Extract the text content from Claude's response
+          AI_TEXT=$(echo "$AI_RESPONSE" | jq -r '.content[0].text // empty' 2>/dev/null)
+
+          if [ -z "$AI_TEXT" ]; then
+            echo "AI API failed or returned empty. Response: $AI_RESPONSE"
+            echo "Falling back to simple logic..."
+
+            # ── FALLBACK: Original simple logic ──────────────────────────
+            PRECIP_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82 85 86 95 96 99"
+            TOMORROW_WET=false
+            ANY_WET=false
+
+            for i in 1 2 3; do
+              CODE=$(echo "$DAILY_FORECAST" | jq -r ".daily.weather_code[$i]")
+              PRECIP=$(echo "$DAILY_FORECAST" | jq -r ".daily.precipitation_sum[$i]")
+              PROB=$(echo "$DAILY_FORECAST" | jq -r ".daily.precipitation_probability_max[$i]")
+
+              IS_WET=false
+              for pc in $PRECIP_CODES; do
+                if [ "$CODE" = "$pc" ]; then IS_WET=true; break; fi
+              done
+              PRECIP_INT=$(echo "$PRECIP" | cut -d. -f1)
+              if [ "${PRECIP_INT:-0}" -gt 0 ] || [ "${PROB:-0}" -gt 30 ]; then
+                IS_WET=true
+              fi
+              if [ "$IS_WET" = true ]; then
+                ANY_WET=true
+                if [ "$i" = 1 ]; then TOMORROW_WET=true; fi
+              fi
+            done
+
+            if [ "$HOUR_UTC" -ge 10 ]; then TIME_LABEL="today"; else TIME_LABEL="tomorrow"; fi
+
+            if [ "$TOMORROW_WET" = true ]; then
+              TITLE="${LOCATION}: No wash ${TIME_LABEL}"
+              BODY="Precipitation expected tomorrow. (AI unavailable — fallback mode)"
+              TAGS="car,x"
+            elif [ "$ANY_WET" = true ]; then
+              TITLE="${LOCATION}: Maybe worth a wash ${TIME_LABEL}"
+              BODY="Possible rain or snow in 3 days. (AI unavailable — fallback mode)"
+              TAGS="car,thinking"
+            else
+              TITLE="${LOCATION}: Good day for a car wash!"
+              BODY="No precipitation for 3 days. (AI unavailable — fallback mode)"
+              TAGS="car,white_check_mark"
+            fi
+
+            # Always notify on fallback
+            curl -sf \
+              -H "Title: ${TITLE}" \
+              -H "Tags: ${TAGS}" \
+              -d "${BODY}" \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Fallback notification sent."
+            exit 0
           fi
 
-          echo "Verdict: $TITLE"
-          echo "Sending notification..."
-          curl -sf \
-            -H "Title: ${TITLE}" \
-            -H "Tags: ${TAGS}" \
-            -d "${BODY}
+          echo "AI response: $AI_TEXT"
 
-          $(echo -e "$FORECAST_SUMMARY")" \
-            "https://ntfy.sh/${NTFY_TOPIC}"
-          echo "Notification sent!"
+          # ── 8. Parse AI response ───────────────────────────────────────
+          SHOULD_NOTIFY=$(echo "$AI_TEXT" | jq -r '.should_notify')
+          TITLE=$(echo "$AI_TEXT" | jq -r '.title')
+          MESSAGE=$(echo "$AI_TEXT" | jq -r '.message')
+          TAGS=$(echo "$AI_TEXT" | jq -r '.tags')
+          VERDICT=$(echo "$AI_TEXT" | jq -r '.verdict')
+          REASONING=$(echo "$AI_TEXT" | jq -r '.reasoning')
+
+          echo "Should notify: $SHOULD_NOTIFY"
+          echo "Verdict: $VERDICT"
+          echo "Reasoning: $REASONING"
+
+          # ── 9. Send notification (or skip) ─────────────────────────────
+          NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          if [ "$SHOULD_NOTIFY" = "true" ]; then
+            echo "Sending notification..."
+            curl -sf \
+              -H "Title: ${TITLE}" \
+              -H "Tags: ${TAGS}" \
+              -d "${MESSAGE}" \
+              "https://ntfy.sh/${NTFY_TOPIC}"
+            echo "Notification sent!"
+
+            # Update state — notification was sent
+            MSG_HASH=$(echo "${VERDICT}|${MESSAGE}" | md5sum | cut -c1-8)
+            jq -n \
+              --arg ts "$NOW_ISO" \
+              --arg verdict "$VERDICT" \
+              --arg hash "$MSG_HASH" \
+              --arg msg "$MESSAGE" \
+              '{
+                last_notification_at: $ts,
+                last_verdict: $verdict,
+                last_message_hash: $hash,
+                last_message: $msg,
+                consecutive_skips: 0
+              }' > "$STATE_FILE"
+          else
+            echo "Skipping notification (AI decided not to ping)."
+
+            # Update state — increment skip counter
+            NEW_SKIPS=$((CONSECUTIVE_SKIPS + 1))
+            echo "$STATE" | jq --arg skips "$NEW_SKIPS" '.consecutive_skips = ($skips | tonumber)' > "$STATE_FILE"
+          fi
+
+          echo "State updated."
+
+      - name: Commit state changes
+        run: |
+          git config user.name "car-wash-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/state.json
+          if git diff --staged --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "[bot] update car wash state"
+            git push
+          fi
