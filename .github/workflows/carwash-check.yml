@@ -2,107 +2,37 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # 6:00 AM EST = 11:00 UTC (will be 7:00am during EDT)
+    # 6:00 AM EST = 11:00 UTC (7:00 AM during EDT)
     - cron: "0 11 * * *"
-    # 9:30 PM EST = 02:30 UTC (will be 10:30pm during EDT)
+    # 9:30 PM EST = 02:30 UTC (10:30 PM during EDT)
     - cron: "30 2 * * *"
   workflow_dispatch:
 
+# ── Configuration ─────────────────────────────────────────────────────
+# Override these by going to:
+#   Settings → Secrets and variables → Actions → Variables
+# and creating LATITUDE, LONGITUDE, and NTFY_TOPIC.
+#
+# The defaults below point at London, UK and a shared public demo ntfy
+# topic — fine for a "does it work?" test, but you'll want your own
+# topic for privacy (anyone subscribed to the demo topic sees everyone
+# else's notifications).
+#
+# VARS_* mirror the raw repo-variable values so the script can tell
+# whether each setting is customized or falling back to a demo default.
 env:
-  LATITUDE: "43.7232"
-  LONGITUDE: "-79.4331"
-  NTFY_TOPIC: "REDACTED-TOPIC"
+  LATITUDE:   ${{ vars.LATITUDE   || '51.5074'  }}
+  LONGITUDE:  ${{ vars.LONGITUDE  || '-0.1278'  }}
+  NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'car-wash-time-demo-a9k2p4xe' }}
+  VARS_LAT:   ${{ vars.LATITUDE   }}
+  VARS_LON:   ${{ vars.LONGITUDE  }}
+  VARS_TOPIC: ${{ vars.NTFY_TOPIC }}
 
 jobs:
   check-weather:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check weather and notify
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Reverse geocode to get city name
-          LOCATION=$(curl -sf \
-            -H "User-Agent: CarWashTime/1.0" \
-            "https://nominatim.openstreetmap.org/reverse?lat=${LATITUDE}&lon=${LONGITUDE}&format=json&zoom=10" \
-            | jq -r '.address.city // .address.town // .address.village // "Unknown"')
-          echo "Location: $LOCATION"
-
-          echo "Fetching forecast for ($LATITUDE, $LONGITUDE)..."
-
-          RESPONSE=$(curl -sf "https://api.open-meteo.com/v1/forecast?\
-          latitude=${LATITUDE}&longitude=${LONGITUDE}\
-          &daily=weather_code,precipitation_sum,precipitation_probability_max\
-          &timezone=auto&forecast_days=7")
-
-          echo "Parsing forecast..."
-
-          # Precipitation WMO codes
-          PRECIP_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82 85 86 95 96 99"
-
-          TOMORROW_WET=false
-          ANY_WET=false
-          FORECAST_SUMMARY=""
-
-          for i in 1 2 3; do
-            DATE=$(echo "$RESPONSE"      | jq -r ".daily.time[$i]")
-            CODE=$(echo "$RESPONSE"      | jq -r ".daily.weather_code[$i]")
-            PRECIP=$(echo "$RESPONSE"    | jq -r ".daily.precipitation_sum[$i]")
-            PROB=$(echo "$RESPONSE"      | jq -r ".daily.precipitation_probability_max[$i]")
-
-            IS_WET=false
-            for pc in $PRECIP_CODES; do
-              if [ "$CODE" = "$pc" ]; then IS_WET=true; break; fi
-            done
-
-            PRECIP_INT=$(echo "$PRECIP" | cut -d. -f1)
-            if [ "${PRECIP_INT:-0}" -gt 0 ] || [ "${PROB:-0}" -gt 30 ]; then
-              IS_WET=true
-            fi
-
-            if [ "$IS_WET" = true ]; then
-              ANY_WET=true
-              if [ "$i" = 1 ]; then TOMORROW_WET=true; fi
-            fi
-
-            STATUS="Dry"
-            [ "$IS_WET" = true ] && STATUS="Wet"
-
-            FORECAST_SUMMARY="${FORECAST_SUMMARY}${DATE}: code=${CODE} precip=${PRECIP}mm prob=${PROB}% [${STATUS}]\n"
-            echo "$DATE: code=$CODE precip=${PRECIP}mm prob=${PROB}% [$STATUS]"
-          done
-
-          # Determine if this is a morning or evening run (13:00 UTC = morning, 02:30 UTC = evening)
-          HOUR_UTC=$(date -u +%H)
-          if [ "$HOUR_UTC" -ge 10 ]; then
-            TIME_LABEL="today"
-          else
-            TIME_LABEL="tomorrow"
-          fi
-
-          # Three-tier verdict
-          if [ "$TOMORROW_WET" = true ]; then
-            TITLE="${LOCATION}: No wash ${TIME_LABEL}"
-            BODY="Precipitation expected tomorrow."
-            TAGS="car,x"
-          elif [ "$ANY_WET" = true ]; then
-            TITLE="${LOCATION}: Maybe worth a wash ${TIME_LABEL}"
-            BODY="Possible rain or snow in 3 days."
-            TAGS="car,thinking"
-          else
-            TITLE="${LOCATION}: Good day for a car wash ${TIME_LABEL}!"
-            BODY="No precipitation for 3 days."
-            TAGS="car,white_check_mark"
-          fi
-
-          echo "Verdict: $TITLE"
-          echo "Sending notification..."
-          curl -sf \
-            -H "Title: ${TITLE}" \
-            -H "Tags: ${TAGS}" \
-            -d "${BODY}
-
-          $(echo -e "$FORECAST_SUMMARY")" \
-            "https://ntfy.sh/${NTFY_TOPIC}"
-          echo "Notification sent!"
+        run: bash scripts/check.sh
