@@ -23,6 +23,7 @@ set -euo pipefail
 # ── Constants ─────────────────────────────────────────────────────────
 readonly OPEN_METEO_URL="https://api.open-meteo.com/v1/forecast"
 readonly NTFY_URL="https://ntfy.sh"
+readonly STATE_FILE="state.json"
 
 # WMO weather codes that indicate any form of precipitation.
 # See https://open-meteo.com/en/docs#weathervariables
@@ -33,7 +34,9 @@ readonly PRECIPITATION_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82
 readonly WINDOW_DAYS=3
 
 # ── Logging helpers ───────────────────────────────────────────────────
-log() { printf '[%s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+# Log to stderr so command substitution on functions below never
+# accidentally captures log noise into its result.
+log() { printf '[%s] %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 die() { echo "::error::$*" >&2; exit 1; }
 
 # ── Config validation ────────────────────────────────────────────────
@@ -63,7 +66,7 @@ require_config() {
 }
 
 # ── Reverse geocoding ────────────────────────────────────────────────
-# Best-effort city-name lookup for the notification title. Falls back
+# Best-effort city-name lookup for the notification body. Falls back
 # to "Unknown" if Nominatim is unreachable or returns nothing useful —
 # we never want a reverse-geocode blip to fail the whole run.
 reverse_geocode() {
@@ -85,13 +88,73 @@ fetch_forecast() {
     || die "Failed to fetch forecast from Open-Meteo"
 }
 
+# ── Weather code lookups ─────────────────────────────────────────────
+# Short, human-readable English description for a WMO weather code.
+weather_description() {
+  case "$1" in
+    0)        echo "Clear" ;;
+    1)        echo "Mostly clear" ;;
+    2)        echo "Partly cloudy" ;;
+    3)        echo "Overcast" ;;
+    45|48)    echo "Fog" ;;
+    51|53|55) echo "Drizzle" ;;
+    56|57)    echo "Freezing drizzle" ;;
+    61)       echo "Light rain" ;;
+    63)       echo "Rain" ;;
+    65)       echo "Heavy rain" ;;
+    66|67)    echo "Freezing rain" ;;
+    71)       echo "Light snow" ;;
+    73)       echo "Snow" ;;
+    75)       echo "Heavy snow" ;;
+    77)       echo "Snow grains" ;;
+    80)       echo "Light showers" ;;
+    81)       echo "Showers" ;;
+    82)       echo "Heavy showers" ;;
+    85|86)    echo "Snow showers" ;;
+    95)       echo "Thunderstorm" ;;
+    96|99)    echo "Thunderstorm with hail" ;;
+    *)        echo "Unknown" ;;
+  esac
+}
+
+# Single emoji for a WMO weather code, to give each forecast line a
+# glanceable visual cue.
+weather_emoji() {
+  case "$1" in
+    0|1)                  echo "☀️"  ;;
+    2)                    echo "⛅"  ;;
+    3)                    echo "☁️"  ;;
+    45|48)                echo "🌫️" ;;
+    51|53|55|61|63|80|81) echo "🌧️" ;;
+    65|82)                echo "🌧️" ;;
+    56|57|66|67)          echo "🧊"  ;;
+    71|73|75|77|85|86)    echo "🌨️" ;;
+    95|96|99)             echo "⛈️"  ;;
+    *)                    echo "❓"  ;;
+  esac
+}
+
+# Given a YYYY-MM-DD, return "Tomorrow" if it's tomorrow, "Today" if
+# it's today, else a short day name like "Fri". Assumes GNU date
+# (the workflow runs on ubuntu-latest).
+day_label() {
+  local target="$1"
+  local today tomorrow
+  today=$(date -u +%Y-%m-%d)
+  tomorrow=$(date -u -d "tomorrow" +%Y-%m-%d)
+
+  if   [ "$target" = "$tomorrow" ]; then echo "Tomorrow"
+  elif [ "$target" = "$today"    ]; then echo "Today"
+  else date -d "$target" "+%a"
+  fi
+}
+
 # ── Analysis ─────────────────────────────────────────────────────────
 # Walks days 1..WINDOW_DAYS (tomorrow onwards) of the forecast and sets
-# three globals for the rest of the script:
+# two globals used by decide_verdict:
 #
-#   TOMORROW_WET      — bool, is day 1 wet?
-#   ANY_WET           — bool, is any day in the window wet?
-#   FORECAST_SUMMARY  — multi-line string, one line per day
+#   TOMORROW_WET — bool, is day 1 wet?
+#   ANY_WET      — bool, is any day in the window wet?
 #
 # A day counts as "wet" if any of these are true:
 #   - its WMO code is in PRECIPITATION_CODES
@@ -101,7 +164,6 @@ analyze_forecast() {
   local forecast="$1"
   TOMORROW_WET=false
   ANY_WET=false
-  FORECAST_SUMMARY=""
 
   local i date code precip prob precip_int is_wet status
   for i in $(seq 1 "$WINDOW_DAYS"); do
@@ -126,16 +188,13 @@ analyze_forecast() {
       [ "$i" = 1 ] && TOMORROW_WET=true
     fi
 
-    status="Dry"
-    [ "$is_wet" = true ] && status="Wet"
-
-    FORECAST_SUMMARY+="${date}: code=${code} precip=${precip}mm prob=${prob}% [${status}]"$'\n'
-    log "$date: code=$code precip=${precip}mm prob=${prob}% [$status]"
+    status="dry"
+    [ "$is_wet" = true ] && status="wet"
+    log "$date: code=$code precip=${precip}mm prob=${prob}% ($status)"
   done
 }
 
-# ── Verdict ──────────────────────────────────────────────────────────
-# Three-tier verdict based on the globals set by analyze_forecast:
+# Three-tier verdict from the globals set by analyze_forecast:
 #   "no"    — skip, tomorrow is already wet
 #   "maybe" — tomorrow is dry but rain is coming in the window
 #   "good"  — the whole window is dry, go wash it
@@ -150,31 +209,70 @@ decide_verdict() {
 }
 
 # ── Message composition ──────────────────────────────────────────────
-# Sets TITLE, BODY, TAGS globals. This is the legacy "techy" format —
-# PR 2 rewrites it into a human-friendly shape with emoji and the
-# location moved to the body.
-compose_message() {
-  local verdict="$1" location="$2" time_label="$3"
+# Builds a human-readable 3-line forecast list from the forecast JSON.
+# Each line uses the day label, a weather emoji, and a short English
+# description. Precipitation probability is appended only when it's
+# notable (>30%), to avoid "(5%)" noise on clear days.
+compose_forecast_lines() {
+  local forecast="$1"
+  local lines="" i date code prob label desc emoji line
+  for i in $(seq 1 "$WINDOW_DAYS"); do
+    date=$(echo "$forecast" | jq -r ".daily.time[$i]")
+    code=$(echo "$forecast" | jq -r ".daily.weather_code[$i]")
+    prob=$(echo "$forecast" | jq -r ".daily.precipitation_probability_max[$i]")
+
+    label=$(day_label "$date")
+    desc=$(weather_description "$code")
+    emoji=$(weather_emoji "$code")
+
+    if [ "${prob:-0}" -gt 30 ]; then
+      line=$(printf '%s: %s %s (%s%%)' "$label" "$emoji" "$desc" "$prob")
+    else
+      line=$(printf '%s: %s %s' "$label" "$emoji" "$desc")
+    fi
+
+    if [ -z "$lines" ]; then
+      lines="$line"
+    else
+      lines=$(printf '%s\n%s' "$lines" "$line")
+    fi
+  done
+  printf '%s' "$lines"
+}
+
+# Sets TITLE, BODY, TAGS globals with the human-friendly notification
+# content. Title leads with a verdict emoji and stays short; body is
+# a one-line reason, a "📍 location" line (omitted if unknown), a
+# blank line, then the 3-day forecast list.
+compose_notification() {
+  local verdict="$1" location="$2" forecast_lines="$3" lead
+
   case "$verdict" in
-    no)
-      TITLE="${location}: No wash ${time_label}"
-      BODY="Precipitation expected tomorrow."
-      TAGS="car,x"
+    good)
+      TITLE="☀️ Good day for a wash"
+      lead="Three clear days ahead. Go for it."
+      TAGS="car,white_check_mark"
       ;;
     maybe)
-      TITLE="${location}: Maybe worth a wash ${time_label}"
-      BODY="Possible rain or snow in 3 days."
+      TITLE="🤔 Maybe wash it"
+      lead="Dry today, but rain is coming. Your call."
       TAGS="car,thinking"
       ;;
-    good)
-      TITLE="${location}: Good day for a car wash ${time_label}!"
-      BODY="No precipitation for 3 days."
-      TAGS="car,white_check_mark"
+    no)
+      TITLE="🚫 Skip the wash"
+      lead="Rain moving in tomorrow — wait it out."
+      TAGS="car,x"
       ;;
     *)
       die "Unknown verdict: $verdict"
       ;;
   esac
+
+  if [ -n "$location" ] && [ "$location" != "Unknown" ]; then
+    BODY=$(printf '%s\n📍 %s\n\n%s' "$lead" "$location" "$forecast_lines")
+  else
+    BODY=$(printf '%s\n\n%s' "$lead" "$forecast_lines")
+  fi
 }
 
 # ── Notifier ─────────────────────────────────────────────────────────
@@ -189,11 +287,72 @@ send_ntfy() {
     || die "Failed to post to ntfy"
 }
 
+# ── State ────────────────────────────────────────────────────────────
+# Persistent state lives in state.json, committed back to main by the
+# workflow after each run. We use it for two things:
+#
+#   1. Notification dedup — "only ping when the verdict changes" needs
+#      to remember what we last notified about.
+#   2. Repository activity — committing state.json twice a day is real,
+#      legitimate repo activity, which keeps GitHub from auto-disabling
+#      the scheduled workflow after 60 days of inactivity. (This is why
+#      the old keepalive.yml is no longer needed.)
+
+# Load last-run state from STATE_FILE. Missing or malformed file is
+# treated as empty-state, which makes fresh forks work on first run.
+load_state() {
+  if [ -f "$STATE_FILE" ]; then
+    LAST_VERDICT=$(jq -r          '.last_verdict          // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_NOTIFIED_VERDICT=$(jq -r '.last_notified_verdict // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_NOTIFIED_AT=$(jq -r      '.last_notified_at      // ""' "$STATE_FILE" 2>/dev/null || echo "")
+  else
+    LAST_VERDICT=""
+    LAST_NOTIFIED_VERDICT=""
+    LAST_NOTIFIED_AT=""
+  fi
+  log "Loaded state: last_verdict='${LAST_VERDICT}', last_notified='${LAST_NOTIFIED_VERDICT}'"
+}
+
+# Returns 0 (notify) or 1 (stay silent). Rule:
+#   - always ping on "good" (actionable — go wash the car)
+#   - otherwise only ping when the verdict differs from what we last
+#     notified about, so repeated "no wash" days don't spam
+should_notify() {
+  local verdict="$1"
+  if [ "$verdict" = "good" ]; then
+    return 0
+  fi
+  if [ "$verdict" != "$LAST_NOTIFIED_VERDICT" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Write the full state object back to STATE_FILE. The workflow commit
+# step picks up the diff and pushes it to main.
+save_state() {
+  local verdict="$1" notified_verdict="$2" notified_at="$3" location="$4"
+  jq -n \
+    --arg run "$(date -u +%FT%TZ)" \
+    --arg v   "$verdict" \
+    --arg nv  "$notified_verdict" \
+    --arg na  "$notified_at" \
+    --arg loc "$location" \
+    '{
+       last_run_utc:          $run,
+       last_verdict:          $v,
+       last_notified_verdict: $nv,
+       last_notified_at:      $na,
+       location:              $loc
+     }' \
+    > "$STATE_FILE"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────
 main() {
   require_config
 
-  local location forecast verdict hour_utc time_label full_body
+  local location forecast verdict forecast_lines notified_verdict notified_at
 
   location=$(reverse_geocode "$LATITUDE" "$LONGITUDE")
   log "Resolved location: $location"
@@ -207,23 +366,24 @@ main() {
   verdict=$(decide_verdict)
   log "Verdict: $verdict"
 
-  # "today" for the morning run, "tomorrow" for the evening run.
-  # Morning fires at ~11 UTC (6am EST), evening at ~02:30 UTC (9:30pm EST).
-  hour_utc=$(date -u +%H)
-  if [ "$hour_utc" -ge 10 ]; then
-    time_label="today"
+  load_state
+
+  if should_notify "$verdict"; then
+    forecast_lines=$(compose_forecast_lines "$forecast")
+    compose_notification "$verdict" "$location" "$forecast_lines"
+    log "Sending notification: $TITLE"
+    send_ntfy "$TITLE" "$BODY" "$TAGS"
+    log "Notification sent."
+    notified_verdict="$verdict"
+    notified_at=$(date -u +%FT%TZ)
   else
-    time_label="tomorrow"
+    log "No change (verdict=$verdict, last_notified=$LAST_NOTIFIED_VERDICT) — staying silent."
+    notified_verdict="$LAST_NOTIFIED_VERDICT"
+    notified_at="$LAST_NOTIFIED_AT"
   fi
 
-  compose_message "$verdict" "$location" "$time_label"
-
-  # Append the per-day forecast summary to the notification body.
-  full_body=$(printf '%s\n\n%s' "$BODY" "$FORECAST_SUMMARY")
-
-  log "Sending notification: $TITLE"
-  send_ntfy "$TITLE" "$full_body" "$TAGS"
-  log "Notification sent."
+  save_state "$verdict" "$notified_verdict" "$notified_at" "$location"
+  log "State written to $STATE_FILE"
 }
 
 main "$@"
