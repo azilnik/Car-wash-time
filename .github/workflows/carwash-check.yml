@@ -28,6 +28,12 @@ env:
   VARS_LON:   ${{ vars.LONGITUDE  }}
   VARS_TOPIC: ${{ vars.NTFY_TOPIC }}
 
+# We need contents:write to commit state.json back to main after each
+# run. That commit is both how we dedupe notifications across runs and
+# how we keep GitHub from auto-disabling this scheduled workflow.
+permissions:
+  contents: write
+
 jobs:
   check-weather:
     runs-on: ubuntu-latest
@@ -36,3 +42,15 @@ jobs:
 
       - name: Check weather and notify
         run: bash scripts/check.sh
+
+      - name: Commit updated state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "state.json unchanged — nothing to commit."
+          else
+            git commit -m "chore: update state [skip ci]"
+            git push
+          fi
