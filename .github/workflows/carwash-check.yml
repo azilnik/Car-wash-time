@@ -13,16 +13,16 @@ on:
 #   Settings → Secrets and variables → Actions → Variables
 # and creating LATITUDE, LONGITUDE, and NTFY_TOPIC.
 #
-# The defaults below point at London, UK and a shared public demo ntfy
-# topic — fine for a "does it work?" test, but you'll want your own
-# topic for privacy (anyone subscribed to the demo topic sees everyone
-# else's notifications).
+# The defaults below point at New York City and a shared public demo
+# ntfy topic — fine for a "does it work?" test, but you'll want your
+# own topic for privacy (anyone subscribed to the demo topic sees
+# everyone else's notifications).
 #
 # VARS_* mirror the raw repo-variable values so the script can tell
 # whether each setting is customized or falling back to a demo default.
 env:
-  LATITUDE:   ${{ vars.LATITUDE   || '51.5074'  }}
-  LONGITUDE:  ${{ vars.LONGITUDE  || '-0.1278'  }}
+  LATITUDE:   ${{ vars.LATITUDE   || '40.7128'  }}
+  LONGITUDE:  ${{ vars.LONGITUDE  || '-74.0060' }}
   NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'car-wash-time-demo-a9k2p4xe' }}
   VARS_LAT:   ${{ vars.LATITUDE   }}
   VARS_LON:   ${{ vars.LONGITUDE  }}

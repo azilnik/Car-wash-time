@@ -65,7 +65,7 @@ pull in or keep driving.
    > **Tip:** Pick a long, random topic name — ntfy topics are public, and anyone
    > who knows yours can see your notifications.
    >
-   > Skipping this step? The workflow ships with demo defaults (London, UK +
+   > Skipping this step? The workflow ships with demo defaults (New York City +
    > a shared public demo topic) so you can test immediately.
 
 3. **Install the [ntfy app](https://ntfy.sh)** (Android / iOS) and subscribe to your topic

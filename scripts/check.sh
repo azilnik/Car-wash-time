@@ -8,7 +8,7 @@
 # Normally invoked by .github/workflows/carwash-check.yml, but can also
 # be run locally for testing with the same environment variables:
 #
-#     LATITUDE=43.7 LONGITUDE=-79.4 NTFY_TOPIC=my-topic bash scripts/check.sh
+#     LATITUDE=40.7128 LONGITUDE=-74.0060 NTFY_TOPIC=my-topic bash scripts/check.sh
 #
 # Required env:
 #   LATITUDE, LONGITUDE  — decimal coordinates
