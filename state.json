@@ -1,7 +1,7 @@
 {
-  "last_run_utc": "2026-04-19T11:17:26Z",
-  "last_verdict": "no",
-  "last_notified_verdict": "no",
-  "last_notified_at": "2026-04-18T11:17:20Z",
+  "last_run_utc": "2026-04-20T03:44:42Z",
+  "last_verdict": "maybe",
+  "last_notified_verdict": "maybe",
+  "last_notified_at": "2026-04-20T03:44:42Z",
   "location": "New York"
 }
