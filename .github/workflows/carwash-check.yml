@@ -11,16 +11,22 @@ on:
 # ── Configuration ─────────────────────────────────────────────────────
 # Override these by going to:
 #   Settings → Secrets and variables → Actions → Variables
-# and creating LATITUDE, LONGITUDE, and NTFY_TOPIC.
+# and creating LOCATION (easiest) and NTFY_TOPIC.
 #
-# The defaults below point at New York City and a shared public demo
-# ntfy topic — fine for a "does it work?" test, but you'll want your
-# own topic for privacy (anyone subscribed to the demo topic sees
-# everyone else's notifications).
+# LOCATION accepts anything Nominatim can resolve: city name, address,
+# postal code. When set, it wins over LATITUDE/LONGITUDE. The first
+# run after it changes does a single geocode call; the script caches
+# the coordinates in state.json so subsequent runs are free.
+#
+# The LATITUDE/LONGITUDE defaults below point at New York City and a
+# shared public demo ntfy topic — fine for a "does it work?" test,
+# but you'll want your own topic for privacy (anyone subscribed to the
+# demo topic sees everyone else's notifications).
 #
 # VARS_* mirror the raw repo-variable values so the script can tell
 # whether each setting is customized or falling back to a demo default.
 env:
+  LOCATION:   ${{ vars.LOCATION   }}
   LATITUDE:   ${{ vars.LATITUDE   || '40.7128'  }}
   LONGITUDE:  ${{ vars.LONGITUDE  || '-74.0060' }}
   NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'car-wash-time-demo-a9k2p4xe' }}
