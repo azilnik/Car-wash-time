@@ -211,17 +211,18 @@ weather_emoji() {
 }
 
 # Given a YYYY-MM-DD, return "Tomorrow" if it's tomorrow, "Today" if
-# it's today, else a short day name like "Fri". Assumes GNU date
-# (the workflow runs on ubuntu-latest).
+# it's today, else a short day name like "Fri". Date arithmetic goes
+# through jq (already a hard dep) so this works under both GNU date
+# (CI) and BSD date (macOS dev machines).
 day_label() {
   local target="$1"
   local today tomorrow
   today=$(date -u +%Y-%m-%d)
-  tomorrow=$(date -u -d "tomorrow" +%Y-%m-%d)
+  tomorrow=$(jq -rn '(now + 86400) | gmtime | strftime("%Y-%m-%d")')
 
   if   [ "$target" = "$tomorrow" ]; then echo "Tomorrow"
   elif [ "$target" = "$today"    ]; then echo "Today"
-  else date -d "$target" "+%a"
+  else jq -rn --arg d "$target" '($d + "T00:00:00Z") | fromdateiso8601 | gmtime | strftime("%a")'
   fi
 }
 
