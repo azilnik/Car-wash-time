@@ -44,7 +44,7 @@ jobs:
   check-weather:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check weather and notify
         run: bash scripts/check.sh
