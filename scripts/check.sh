@@ -8,11 +8,15 @@
 # Normally invoked by .github/workflows/carwash-check.yml, but can also
 # be run locally for testing with the same environment variables:
 #
+#     LOCATION="Toronto, Ontario" NTFY_TOPIC=my-topic bash scripts/check.sh
+#     # or the lower-level form:
 #     LATITUDE=40.7128 LONGITUDE=-74.0060 NTFY_TOPIC=my-topic bash scripts/check.sh
 #
 # Required env:
-#   LATITUDE, LONGITUDE  — decimal coordinates
 #   NTFY_TOPIC           — ntfy.sh topic (no URL prefix)
+#   plus one of:
+#     LOCATION           — any human-readable place (preferred); geocoded once
+#     LATITUDE+LONGITUDE — decimal coordinates (fallback for power users)
 #
 # Optional env (set by the workflow to distinguish custom config from
 # the baked-in demo defaults — empty means "using the default"):
@@ -48,14 +52,19 @@ die() { echo "::error::$*" >&2; exit 1; }
 # values (empty when the user hasn't configured them). We use them
 # purely to log whether the active config is custom or the demo default.
 require_config() {
-  [ -n "${LATITUDE:-}"   ] || die "LATITUDE not set"
-  [ -n "${LONGITUDE:-}"  ] || die "LONGITUDE not set"
   [ -n "${NTFY_TOPIC:-}" ] || die "NTFY_TOPIC not set"
 
-  if [ -z "${VARS_LAT:-}" ] || [ -z "${VARS_LON:-}" ]; then
-    log "Location: ${LATITUDE}, ${LONGITUDE} (demo default — set vars.LATITUDE / vars.LONGITUDE to customize)"
+  if [ -n "${LOCATION:-}" ]; then
+    log "Location: ${LOCATION} (to be geocoded)"
   else
-    log "Location: ${LATITUDE}, ${LONGITUDE}"
+    [ -n "${LATITUDE:-}"  ] || die "Set LOCATION (easier) or LATITUDE+LONGITUDE"
+    [ -n "${LONGITUDE:-}" ] || die "Set LOCATION (easier) or LATITUDE+LONGITUDE"
+
+    if [ -z "${VARS_LAT:-}" ] || [ -z "${VARS_LON:-}" ]; then
+      log "Location: ${LATITUDE}, ${LONGITUDE} (demo default — set vars.LOCATION for the easy path)"
+    else
+      log "Location: ${LATITUDE}, ${LONGITUDE}"
+    fi
   fi
 
   if [ -z "${VARS_TOPIC:-}" ]; then
@@ -65,10 +74,77 @@ require_config() {
   fi
 }
 
+# ── Forward geocoding ────────────────────────────────────────────────
+# Turn a human-readable place (city, address, postal code) into decimal
+# lat/lon via Nominatim. Caches the result in STATE_FILE keyed on the
+# query string, so only the first run after LOCATION changes hits the
+# geocoder — subsequent runs are free.
+#
+# On success, sets LATITUDE, LONGITUDE, GEOCODED_LOCATION.
+# On failure, exits hard — sending a forecast for the wrong place is
+# worse than breaking loudly.
+resolve_location() {
+  local query="$1"
+  local cached_query cached_lat cached_lon cached_name
+
+  if [ -f "$STATE_FILE" ]; then
+    cached_query=$(jq -r '.location_query // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    cached_lat=$(jq -r   '.location_lat   // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    cached_lon=$(jq -r   '.location_lon   // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    cached_name=$(jq -r  '.location_name  // ""' "$STATE_FILE" 2>/dev/null || echo "")
+
+    if [ "$cached_query" = "$query" ] && [ -n "$cached_lat" ] && [ -n "$cached_lon" ]; then
+      log "Geocode cache hit: '$query' → $cached_lat, $cached_lon ($cached_name)"
+      LATITUDE="$cached_lat"
+      LONGITUDE="$cached_lon"
+      GEOCODED_LOCATION="$cached_name"
+      return 0
+    fi
+  fi
+
+  log "Geocoding '$query' via Nominatim..."
+
+  # Bare 5-digit inputs are ambiguous across countries (10001 is both
+  # Manhattan and Tallinn, Estonia, and Nominatim's relevance ranking
+  # picks Tallinn). Scope to the US — by far the most likely intent for
+  # a bare 5-digit input. If the caller actually meant a non-US postal
+  # code (e.g. a German PLZ), the country in the success log below makes
+  # the mis-scope obvious on the very first run.
+  local curl_args=(
+    -sf -G
+    -H "User-Agent: CarWashTime/1.0"
+    --data-urlencode "q=${query}"
+    --data-urlencode "format=json"
+    --data-urlencode "limit=1"
+    --data-urlencode "addressdetails=1"
+  )
+  if [[ "$query" =~ ^[0-9]{5}$ ]]; then
+    log "'$query' looks like a US ZIP — scoping search to United States"
+    curl_args+=( --data-urlencode "countrycodes=us" )
+  fi
+
+  local result
+  result=$(curl "${curl_args[@]}" "https://nominatim.openstreetmap.org/search") \
+    || die "Failed to reach Nominatim — check network or try again later"
+
+  LATITUDE=$(echo  "$result" | jq -r '.[0].lat // ""')
+  LONGITUDE=$(echo "$result" | jq -r '.[0].lon // ""')
+  GEOCODED_LOCATION=$(echo "$result" | jq -r \
+    '.[0].address.city // .[0].address.town // .[0].address.village // .[0].address.county // "Unknown"')
+  local country
+  country=$(echo "$result" | jq -r '.[0].address.country // "?"')
+
+  [ -n "$LATITUDE" ] && [ -n "$LONGITUDE" ] \
+    || die "Couldn't find '$query' — try something like 'Toronto, Ontario' or a postal code."
+
+  log "Geocoded '$query' → $LATITUDE, $LONGITUDE ($GEOCODED_LOCATION, $country)"
+}
+
 # ── Reverse geocoding ────────────────────────────────────────────────
-# Best-effort city-name lookup for the notification body. Falls back
-# to "Unknown" if Nominatim is unreachable or returns nothing useful —
-# we never want a reverse-geocode blip to fail the whole run.
+# Best-effort city-name lookup for the notification body when the user
+# supplied raw lat/lon. Falls back to "Unknown" if Nominatim is
+# unreachable or returns nothing useful — we never want a reverse-geocode
+# blip to fail the whole run.
 reverse_geocode() {
   local lat="$1" lon="$2"
   curl -sf \
@@ -332,18 +408,27 @@ should_notify() {
 # step picks up the diff and pushes it to main.
 save_state() {
   local verdict="$1" notified_verdict="$2" notified_at="$3" location="$4"
+  local cache_query="${5:-}" cache_lat="${6:-}" cache_lon="${7:-}" cache_name="${8:-}"
   jq -n \
     --arg run "$(date -u +%FT%TZ)" \
     --arg v   "$verdict" \
     --arg nv  "$notified_verdict" \
     --arg na  "$notified_at" \
     --arg loc "$location" \
+    --arg lq  "$cache_query" \
+    --arg la  "$cache_lat" \
+    --arg lo  "$cache_lon" \
+    --arg ln  "$cache_name" \
     '{
        last_run_utc:          $run,
        last_verdict:          $v,
        last_notified_verdict: $nv,
        last_notified_at:      $na,
-       location:              $loc
+       location:              $loc,
+       location_query:        $lq,
+       location_lat:          $la,
+       location_lon:          $lo,
+       location_name:         $ln
      }' \
     > "$STATE_FILE"
 }
@@ -353,8 +438,19 @@ main() {
   require_config
 
   local location forecast verdict forecast_lines notified_verdict notified_at
+  local cache_query="" cache_lat="" cache_lon="" cache_name=""
 
-  location=$(reverse_geocode "$LATITUDE" "$LONGITUDE")
+  if [ -n "${LOCATION:-}" ]; then
+    GEOCODED_LOCATION=""
+    resolve_location "$LOCATION"
+    location="$GEOCODED_LOCATION"
+    cache_query="$LOCATION"
+    cache_lat="$LATITUDE"
+    cache_lon="$LONGITUDE"
+    cache_name="$GEOCODED_LOCATION"
+  else
+    location=$(reverse_geocode "$LATITUDE" "$LONGITUDE")
+  fi
   log "Resolved location: $location"
 
   log "Fetching forecast..."
@@ -382,7 +478,8 @@ main() {
     notified_at="$LAST_NOTIFIED_AT"
   fi
 
-  save_state "$verdict" "$notified_verdict" "$notified_at" "$location"
+  save_state "$verdict" "$notified_verdict" "$notified_at" "$location" \
+             "$cache_query" "$cache_lat" "$cache_lon" "$cache_name"
   log "State written to $STATE_FILE"
 }
 
