@@ -103,25 +103,41 @@ resolve_location() {
   fi
 
   log "Geocoding '$query' via Nominatim..."
+
+  # Bare 5-digit inputs are ambiguous across countries (10001 is both
+  # Manhattan and Tallinn, Estonia, and Nominatim's relevance ranking
+  # picks Tallinn). Scope to the US — by far the most likely intent for
+  # a bare 5-digit input. If the caller actually meant a non-US postal
+  # code (e.g. a German PLZ), the country in the success log below makes
+  # the mis-scope obvious on the very first run.
+  local curl_args=(
+    -sf -G
+    -H "User-Agent: CarWashTime/1.0"
+    --data-urlencode "q=${query}"
+    --data-urlencode "format=json"
+    --data-urlencode "limit=1"
+    --data-urlencode "addressdetails=1"
+  )
+  if [[ "$query" =~ ^[0-9]{5}$ ]]; then
+    log "'$query' looks like a US ZIP — scoping search to United States"
+    curl_args+=( --data-urlencode "countrycodes=us" )
+  fi
+
   local result
-  result=$(curl -sf -G \
-    -H "User-Agent: CarWashTime/1.0" \
-    --data-urlencode "q=${query}" \
-    --data-urlencode "format=json" \
-    --data-urlencode "limit=1" \
-    --data-urlencode "addressdetails=1" \
-    "https://nominatim.openstreetmap.org/search") \
+  result=$(curl "${curl_args[@]}" "https://nominatim.openstreetmap.org/search") \
     || die "Failed to reach Nominatim — check network or try again later"
 
   LATITUDE=$(echo  "$result" | jq -r '.[0].lat // ""')
   LONGITUDE=$(echo "$result" | jq -r '.[0].lon // ""')
   GEOCODED_LOCATION=$(echo "$result" | jq -r \
     '.[0].address.city // .[0].address.town // .[0].address.village // .[0].address.county // "Unknown"')
+  local country
+  country=$(echo "$result" | jq -r '.[0].address.country // "?"')
 
   [ -n "$LATITUDE" ] && [ -n "$LONGITUDE" ] \
     || die "Couldn't find '$query' — try something like 'Toronto, Ontario' or a postal code."
 
-  log "Geocoded '$query' → $LATITUDE, $LONGITUDE ($GEOCODED_LOCATION)"
+  log "Geocoded '$query' → $LATITUDE, $LONGITUDE ($GEOCODED_LOCATION, $country)"
 }
 
 # ── Reverse geocoding ────────────────────────────────────────────────

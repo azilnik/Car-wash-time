@@ -61,9 +61,11 @@ pull in or keep driving.
    | `LOCATION` | `Toronto, Ontario` | City, address, or postal code — anything a map can find |
    | `NTFY_TOPIC` | `my-carwash-x7k9m2p4` | A unique [ntfy.sh](https://ntfy.sh) topic |
 
-   Other `LOCATION` values that work: `"Brooklyn, NY"`, `"M5V 3A8"`, `"10001, USA"`,
-   `"1600 Amphitheatre Parkway, Mountain View, CA"`. Include the state/country for
-   postal codes — `"10001"` alone resolves to Tallinn, Estonia.
+   Other `LOCATION` values that work: `"Brooklyn, NY"`, `"M5V 3A8"`, `"10001"`,
+   `"1600 Amphitheatre Parkway, Mountain View, CA"`. Bare 5-digit inputs are
+   auto-scoped to US ZIPs — for a non-US postal code, include the country
+   (e.g. `"10115, Germany"` for Berlin, since `"10115"` alone would otherwise
+   be read as a US ZIP). Check the country in the first run's log to confirm.
 
    > **Tip:** Pick a long, random topic name — ntfy topics are public, and anyone
    > who knows yours can see your notifications.
