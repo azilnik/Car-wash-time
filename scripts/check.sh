@@ -18,7 +18,18 @@
 #     LOCATION           — any human-readable place (preferred); geocoded once
 #     LATITUDE+LONGITUDE — decimal coordinates (fallback for power users)
 #
-# Optional env (set by the workflow to distinguish custom config from
+# Optional env:
+#   MORNING_HOUR         — local hour for morning notification (default 6,
+#                          decimals OK: 6.5 = 6:30 AM)
+#   EVENING_HOUR         — local hour for evening notification (default 21.5
+#                          for 9:30 PM)
+#
+# Local time is derived from Open-Meteo's response for your coordinates,
+# so DST handles itself. The workflow fires every 30 minutes; out-of-
+# window firings exit early without writing state, so only morning and
+# evening firings produce commits and notifications.
+#
+# Internal env (set by the workflow to distinguish custom config from
 # the baked-in demo defaults — empty means "using the default"):
 #   VARS_LAT, VARS_LON, VARS_TOPIC
 
@@ -162,6 +173,49 @@ fetch_forecast() {
   curl -sf \
     "${OPEN_METEO_URL}?latitude=${lat}&longitude=${lon}&daily=weather_code,precipitation_sum,precipitation_probability_max&timezone=auto&forecast_days=7" \
     || die "Failed to fetch forecast from Open-Meteo"
+}
+
+# ── Time-window check ────────────────────────────────────────────────
+# GitHub Actions cron is UTC-only, but we want notifications at a
+# *local* morning and evening hour. The workflow fires every 30 min; we
+# use Open-Meteo's `utc_offset_seconds` (already in the forecast JSON)
+# to convert that into local time and return 0 only on the firings that
+# fall within 15 minutes of MORNING_HOUR or EVENING_HOUR. All other
+# firings exit main() without touching state, so the state commit is
+# skipped and the Actions tab stays quiet.
+#
+# The 15-minute window matches our 30-minute cron exactly: for any
+# whole-or-half target hour (e.g. 6, 6.5, 21.5), only one cron firing
+# falls within ±15 min, so we never double-notify. DST flips are
+# automatic since the offset comes back fresh with every forecast.
+should_run_now() {
+  local utc_offset_seconds="$1"
+  local morning_hour="${MORNING_HOUR:-6}"
+  local evening_hour="${EVENING_HOUR:-21.5}"
+
+  local now_utc local_epoch local_minute local_label
+  now_utc=$(date -u +%s)
+  local_epoch=$((now_utc + utc_offset_seconds))
+  local_minute=$(( (local_epoch / 60) % 1440 ))
+  [ "$local_minute" -lt 0 ] && local_minute=$((local_minute + 1440))
+  local_label=$(printf '%02d:%02d' $((local_minute / 60)) $((local_minute % 60)))
+
+  local target_hour target_min diff
+  for target_hour in "$morning_hour" "$evening_hour"; do
+    target_min=$(awk -v h="$target_hour" 'BEGIN { printf "%.0f", h * 60 }')
+    diff=$(( local_minute - target_min ))
+    diff=${diff#-}
+    # Wrap-around: for targets near midnight, the shortest distance
+    # might cross the 00:00 boundary.
+    [ "$diff" -gt 720 ] && diff=$(( 1440 - diff ))
+    if [ "$diff" -le 15 ]; then
+      log "Local time ${local_label} matches target ${target_hour}h (diff ${diff}min)"
+      return 0
+    fi
+  done
+
+  log "Local time ${local_label} out of window (morning=${morning_hour}h, evening=${evening_hour}h) — skipping"
+  return 1
 }
 
 # ── Weather code lookups ─────────────────────────────────────────────
@@ -456,6 +510,12 @@ main() {
 
   log "Fetching forecast..."
   forecast=$(fetch_forecast "$LATITUDE" "$LONGITUDE")
+
+  local utc_offset
+  utc_offset=$(echo "$forecast" | jq -r '.utc_offset_seconds // 0')
+  if ! should_run_now "$utc_offset"; then
+    exit 0
+  fi
 
   log "Analyzing forecast..."
   analyze_forecast "$forecast"

@@ -2,10 +2,11 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # 6:00 AM EST = 11:00 UTC (7:00 AM during EDT)
-    - cron: "0 11 * * *"
-    # 9:30 PM EST = 02:30 UTC (10:30 PM during EDT)
-    - cron: "30 2 * * *"
+    # Fire every 30 minutes (UTC). The script reads your local timezone
+    # from Open-Meteo's response and only sends a notification when the
+    # current local time matches MORNING_HOUR or EVENING_HOUR. All other
+    # firings exit cheaply without committing state.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 # ── Configuration ─────────────────────────────────────────────────────
@@ -18,21 +19,28 @@ on:
 # run after it changes does a single geocode call; the script caches
 # the coordinates in state.json so subsequent runs are free.
 #
+# MORNING_HOUR and EVENING_HOUR are local hours at your LOCATION
+# (defaults: 6 = 6:00 AM, 21.5 = 9:30 PM). Decimals are supported.
+# Timezone is derived from your coordinates, so you never set it
+# manually and DST is handled automatically.
+#
 # The LATITUDE/LONGITUDE defaults below point at New York City and a
-# shared public demo ntfy topic — fine for a "does it work?" test,
+# shared public demo ntfy topic, fine for a "does it work?" test,
 # but you'll want your own topic for privacy (anyone subscribed to the
 # demo topic sees everyone else's notifications).
 #
 # VARS_* mirror the raw repo-variable values so the script can tell
 # whether each setting is customized or falling back to a demo default.
 env:
-  LOCATION:   ${{ vars.LOCATION   }}
-  LATITUDE:   ${{ vars.LATITUDE   || '40.7128'  }}
-  LONGITUDE:  ${{ vars.LONGITUDE  || '-74.0060' }}
-  NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'car-wash-time-demo-a9k2p4xe' }}
-  VARS_LAT:   ${{ vars.LATITUDE   }}
-  VARS_LON:   ${{ vars.LONGITUDE  }}
-  VARS_TOPIC: ${{ vars.NTFY_TOPIC }}
+  LOCATION:      ${{ vars.LOCATION      }}
+  LATITUDE:      ${{ vars.LATITUDE      || '40.7128'  }}
+  LONGITUDE:     ${{ vars.LONGITUDE     || '-74.0060' }}
+  NTFY_TOPIC:    ${{ vars.NTFY_TOPIC    || 'car-wash-time-demo-a9k2p4xe' }}
+  MORNING_HOUR:  ${{ vars.MORNING_HOUR  || '6' }}
+  EVENING_HOUR:  ${{ vars.EVENING_HOUR  || '21.5' }}
+  VARS_LAT:      ${{ vars.LATITUDE      }}
+  VARS_LON:      ${{ vars.LONGITUDE     }}
+  VARS_TOPIC:    ${{ vars.NTFY_TOPIC    }}
 
 # We need contents:write to commit state.json back to main after each
 # run. That commit is both how we dedupe notifications across runs and
