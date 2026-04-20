@@ -58,5 +58,16 @@ jobs:
             echo "state.json unchanged — nothing to commit."
           else
             git commit -m "chore: update state [skip ci]"
-            git push
+            # If a PR merges to main while we're running, the push gets rejected.
+            # Rebase our single state.json commit on top of the new main and retry.
+            attempt=1
+            until git push; do
+              if [ $attempt -ge 3 ]; then
+                echo "Push still failing after $attempt attempts — giving up."
+                exit 1
+              fi
+              echo "Push rejected (attempt $attempt) — rebasing on latest main and retrying."
+              git pull --rebase origin main
+              attempt=$((attempt + 1))
+            done
           fi
