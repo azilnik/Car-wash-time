@@ -70,8 +70,9 @@ pull in or keep driving.
    > **Tip:** Pick a long, random topic name — ntfy topics are public, and anyone
    > who knows yours can see your notifications.
    >
-   > Prefer decimal coordinates? Set `LATITUDE` and `LONGITUDE` directly instead of
-   > `LOCATION` — useful if you don't want your home address in the repo's state file.
+   > Worried about committing your address to a public repo? See [Privacy](#privacy)
+   > — you can either use `LATITUDE`/`LONGITUDE` directly, or duplicate the repo
+   > to a private one.
    >
    > Skipping this step? The workflow ships with demo defaults (New York City +
    > a shared public demo topic) so you can test immediately.
@@ -81,6 +82,43 @@ pull in or keep driving.
 5. That's it. You'll get a notification before your morning commute.
 
    To test right now: Actions → Daily Car Wash Check → Run workflow.
+
+## Privacy
+
+On a **public** fork, some things leak through normal workflow activity:
+
+- **`state.json` is committed back to `main` after every run.** With `LOCATION` set, it includes the text you typed (e.g. `"123 Main St, Anytown, OH"`), the resolved coordinates, and the city name — all readable in the repo's git history.
+- **Workflow run logs are public** and echo the geocode result (`Geocoded 'X' → lat, lon (city, country)`) and your ntfy topic.
+- **ntfy topics are public by design.** Anyone who knows the topic name can subscribe and see your notifications.
+
+Repo variables themselves are only visible to collaborators in Settings — but their values leak through the runtime artifacts above.
+
+### Keep your setup private while the project stays public
+
+GitHub won't let you make a fork private. Duplicate the repo to a new private one instead:
+
+```bash
+gh repo create you/car-wash-time-private --private --clone=false
+git clone --bare https://github.com/azilnik/Car-wash-time.git
+cd Car-wash-time.git
+git push --mirror git@github.com:you/car-wash-time-private.git
+```
+
+You now have a disconnected private copy. Set your real `LOCATION` and `NTFY_TOPIC` there; leave any public fork with demo defaults. Private repos get 2,000 free Actions minutes/month; this workflow uses ~5.
+
+Pulling future upstream updates:
+
+```bash
+git remote add upstream https://github.com/azilnik/Car-wash-time.git
+git fetch upstream && git merge upstream/main && git push origin main
+```
+
+See [GitHub's docs on duplicating a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/duplicating-a-repository) for the full flow.
+
+### Lighter option: keep your fork public, minimize the leak
+
+- Use `LATITUDE`/`LONGITUDE` directly and leave `LOCATION` unset. Your typed input never hits `state.json` — only the coordinates do, which is a weaker privacy signal than a street address.
+- Pick a long, random `NTFY_TOPIC` you don't share.
 
 ## Design Constraints
 
