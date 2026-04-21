@@ -1,11 +1,11 @@
 <h1 align="center">Car Wash Time</h1>
 
 <p align="center">
-  <strong>Should I pay for a car wash today, or is the sky about to waste my money?</strong>
+  <strong>Know whether it's worth washing the car before the next rain or snow.</strong>
 </p>
 
 <p align="center">
-  A zero-cost GitHub Actions workflow that checks the forecast twice a day and sends a push notification telling you whether it's worth washing the car.
+  A GitHub Actions workflow that checks the forecast twice a day and pushes a notification with a go / maybe / skip verdict.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 
 ## Why This Exists
 
-Every morning I drive past the car wash after school dropoff. The car is filthy, the kids have opinions about it, and I can never remember if rain is coming. I'm not going to check three weather apps while merging onto the highway. So I built this. By the time I'm approaching the car wash, I already know whether to pull in or keep driving.
+My car is parked outside year-round. Through a Canadian winter that means road salt, slush, and freezing rain — a wash is only worth paying for if there's a clear stretch before the next storm coats everything again. The same logic applies to rain in the warmer months. Rather than checking the forecast manually every time I drive past a wash, this sends a twice-daily verdict so the decision is already made.
 
 ## What You'll Get
 
@@ -27,8 +27,8 @@ Twice a day, a push notification with one of three verdicts:
 | Verdict | Notification | Meaning |
 |---|---|---|
 | **Good** | ☀️ Good day for a wash | No precipitation in the next 3 days. Go for it. |
-| **Maybe** | 🤔 Maybe wash it | Today is dry, but rain is coming. Your call. |
-| **Skip** | 🚫 Skip the wash | Rain tomorrow. Save your money. |
+| **Maybe** | 🤔 Maybe wash it | Today is dry, but precipitation is coming. Your call. |
+| **Skip** | 🚫 Skip the wash | Precipitation tomorrow. Skip it. |
 
 Repeated "skip" or "maybe" days don't spam you. You only get notified when the verdict is "good" (actionable) or when it changes from the day before.
 
@@ -74,8 +74,8 @@ flowchart LR
     A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>3-day forecast]
     B --> C{Precipitation<br/>in next 3 days?}
     C -->|None| D[☀️ Good]
-    C -->|Today dry,<br/>rain later| E[🤔 Maybe]
-    C -->|Rain tomorrow| F[🚫 Skip]
+    C -->|Today dry,<br/>precip later| E[🤔 Maybe]
+    C -->|Precip tomorrow| F[🚫 Skip]
     D --> G[ntfy.sh<br/>push to phone]
     E --> G
     F --> G
@@ -109,4 +109,4 @@ Everything here is free and key-free.
 
 ---
 
-<p align="center"><em>Built so I stop wasting money on car washes right before it rains.</em></p>
+<p align="center"><em>Runs on a schedule. Sends a notification. That's the whole thing.</em></p>
