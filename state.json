@@ -1,8 +1,8 @@
 {
-  "last_run_utc": "2026-04-20T19:14:33Z",
-  "last_verdict": "good",
-  "last_notified_verdict": "good",
-  "last_notified_at": "2026-04-20T19:14:33Z",
+  "last_run_utc": "2026-04-21T14:18:20Z",
+  "last_verdict": "maybe",
+  "last_notified_verdict": "maybe",
+  "last_notified_at": "2026-04-21T14:18:20Z",
   "location": "Toronto",
   "location_query": "Toronto, Ontario",
   "location_lat": "43.6534817",
