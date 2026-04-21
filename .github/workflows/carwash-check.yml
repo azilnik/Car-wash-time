@@ -8,6 +8,11 @@ on:
     # firings exit cheaply without committing state.
     - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Bypass the local-time window and send a notification now (for testing)."
+        type: boolean
+        default: false
 
 # ── Configuration ─────────────────────────────────────────────────────
 # Override these by going to:
@@ -38,6 +43,7 @@ env:
   NTFY_TOPIC:    ${{ vars.NTFY_TOPIC    || 'car-wash-time-demo-a9k2p4xe' }}
   MORNING_HOUR:  ${{ vars.MORNING_HOUR  || '6' }}
   EVENING_HOUR:  ${{ vars.EVENING_HOUR  || '21.5' }}
+  FORCE_RUN:     ${{ inputs.force_run }}
   VARS_LAT:      ${{ vars.LATITUDE      }}
   VARS_LON:      ${{ vars.LONGITUDE     }}
   VARS_TOPIC:    ${{ vars.NTFY_TOPIC    }}

@@ -193,6 +193,13 @@ should_run_now() {
   local morning_hour="${MORNING_HOUR:-6}"
   local evening_hour="${EVENING_HOUR:-21.5}"
 
+  # FORCE_RUN lets a manual workflow_dispatch (or local invocation) bypass
+  # the window so you can smoke-test notifications on demand.
+  if [ "${FORCE_RUN:-false}" = "true" ]; then
+    log "FORCE_RUN=true — skipping time-window check"
+    return 0
+  fi
+
   local now_utc local_epoch local_minute local_label
   now_utc=$(date -u +%s)
   local_epoch=$((now_utc + utc_offset_seconds))
