@@ -14,6 +14,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Car Wash Time notification on a phone" width="320">
+</p>
+
 ---
 
 ## Why This Exists
