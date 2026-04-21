@@ -1,13 +1,22 @@
 # Customization
 
-## Change the schedule
+## Change the notification times
 
-The default schedule runs twice a day in Eastern Time:
+The default schedule sends notifications at:
 
-- **6:00 AM ET** (11:00 UTC) for the morning commute
-- **9:30 PM ET** (02:30 UTC) for tomorrow's planning
+- **6:00 AM** (local time at your `LOCATION`) — morning commute
+- **9:30 PM** (local time at your `LOCATION`) — evening planning
 
-To change it, edit the `cron` lines in [`.github/workflows/carwash-check.yml`](../.github/workflows/carwash-check.yml). Use [crontab.guru](https://crontab.guru/) to build the expression. GitHub Actions cron is in UTC.
+To change these times, add `MORNING_HOUR` and `EVENING_HOUR` repo variables under **Settings → Secrets and variables → Actions → Variables**. Values are decimal local hours at your location — no need to think in UTC.
+
+| Variable | Example | Effect |
+|---|---|---|
+| `MORNING_HOUR` | `7` | Morning notification at 7:00 AM |
+| `EVENING_HOUR` | `20` | Evening notification at 8:00 PM |
+
+Decimals are supported: `6.5` = 6:30 AM, `21.5` = 9:30 PM. Timezone is derived automatically from your `LOCATION`, so DST is handled without any extra config.
+
+The underlying cron fires every 30 minutes. Only edit that expression (in [`.github/workflows/carwash-check.yml`](../.github/workflows/carwash-check.yml)) if you want to add or remove a notification slot entirely.
 
 ## Use coordinates instead of an address
 
