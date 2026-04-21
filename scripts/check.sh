@@ -247,6 +247,26 @@ weather_description() {
   esac
 }
 
+# Bucket a WMO weather code into a short noun phrase for use inside a
+# notification sentence ("rain moving in tomorrow", "expect snow"). We
+# collapse the 20-odd wet codes into the handful of buckets a driver
+# actually cares about: drizzle and showers are just "rain", everything
+# frozen-and-liquid is "freezing rain", thunderstorms-with-hail surface
+# as "hail" because hail is the real concern for a freshly washed car.
+# Dry codes (and anything unrecognized) fall through to the generic
+# "precipitation" fallback, which is what analyze_forecast may mark as
+# wet purely from precipitation_sum / probability.
+precipitation_category() {
+  case "$1" in
+    51|53|55|61|63|65|80|81|82) echo "rain" ;;
+    56|57|66|67)                echo "freezing rain" ;;
+    71|73|75|77|85|86)          echo "snow" ;;
+    95)                         echo "thunderstorms" ;;
+    96|99)                      echo "hail" ;;
+    *)                          echo "precipitation" ;;
+  esac
+}
+
 # Single emoji for a WMO weather code, to give each forecast line a
 # glanceable visual cue.
 weather_emoji() {
@@ -282,10 +302,13 @@ day_label() {
 
 # ── Analysis ─────────────────────────────────────────────────────────
 # Walks days 1..WINDOW_DAYS (tomorrow onwards) of the forecast and sets
-# two globals used by decide_verdict:
+# globals used by decide_verdict and compose_notification:
 #
-#   TOMORROW_WET — bool, is day 1 wet?
-#   ANY_WET      — bool, is any day in the window wet?
+#   TOMORROW_WET    — bool, is day 1 wet?
+#   ANY_WET         — bool, is any day in the window wet?
+#   TOMORROW_CODE   — WMO code for tomorrow (empty when dry)
+#   FIRST_WET_CODE  — WMO code for the first wet day in the window,
+#                     used to describe what's coming on a "maybe" day
 #
 # A day counts as "wet" if any of these are true:
 #   - its WMO code is in PRECIPITATION_CODES
@@ -295,6 +318,8 @@ analyze_forecast() {
   local forecast="$1"
   TOMORROW_WET=false
   ANY_WET=false
+  TOMORROW_CODE=""
+  FIRST_WET_CODE=""
 
   local i date code precip prob precip_int is_wet status
   for i in $(seq 1 "$WINDOW_DAYS"); do
@@ -316,7 +341,11 @@ analyze_forecast() {
 
     if [ "$is_wet" = true ]; then
       ANY_WET=true
-      [ "$i" = 1 ] && TOMORROW_WET=true
+      [ -z "$FIRST_WET_CODE" ] && FIRST_WET_CODE="$code"
+      if [ "$i" = 1 ]; then
+        TOMORROW_WET=true
+        TOMORROW_CODE="$code"
+      fi
     fi
 
     status="dry"
@@ -375,8 +404,12 @@ compose_forecast_lines() {
 # content. Title leads with a verdict emoji and stays short; body is
 # a one-line reason, a "📍 location" line (omitted if unknown), a
 # blank line, then the 3-day forecast list.
+#
+# `category` names the type of precipitation driving the verdict (one of
+# "rain", "snow", "freezing rain", "thunderstorms", "hail",
+# "precipitation"). Ignored for "good" since there's nothing coming.
 compose_notification() {
-  local verdict="$1" location="$2" forecast_lines="$3" lead
+  local verdict="$1" category="$2" location="$3" forecast_lines="$4" lead
 
   case "$verdict" in
     good)
@@ -386,12 +419,12 @@ compose_notification() {
       ;;
     maybe)
       TITLE="🤔 Maybe wash it"
-      lead="Dry today, but rain is coming. Your call."
+      lead=$(printf 'Dry today, expect %s. Your call.' "$category")
       TAGS="car,thinking"
       ;;
     no)
       TITLE="🚫 Skip the wash"
-      lead="Rain moving in tomorrow — wait it out."
+      lead=$(printf '%s moving in tomorrow — wait it out.' "${category^}")
       TAGS="car,x"
       ;;
     *)
@@ -526,8 +559,13 @@ main() {
   load_state
 
   if should_notify "$verdict"; then
+    local precip_category=""
+    case "$verdict" in
+      no)    precip_category=$(precipitation_category "$TOMORROW_CODE") ;;
+      maybe) precip_category=$(precipitation_category "$FIRST_WET_CODE") ;;
+    esac
     forecast_lines=$(compose_forecast_lines "$forecast")
-    compose_notification "$verdict" "$location" "$forecast_lines"
+    compose_notification "$verdict" "$precip_category" "$location" "$forecast_lines"
     log "Sending notification: $TITLE"
     send_ntfy "$TITLE" "$BODY" "$TAGS"
     log "Notification sent."
