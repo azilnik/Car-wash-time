@@ -3,9 +3,10 @@ name: Daily Car Wash Check
 on:
   schedule:
     # Fire every 30 minutes (UTC). The script reads your local timezone
-    # from Open-Meteo's response and only sends a notification when the
-    # current local time matches MORNING_HOUR or EVENING_HOUR. All other
-    # firings exit cheaply without committing state.
+    # from Open-Meteo's response and runs at most once per morning /
+    # evening slot per local day, tracked in state.json. Redundant
+    # firings exit cheaply without committing state; firings delayed by
+    # GitHub Actions cron drift still catch the slot on the next tick.
     - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
