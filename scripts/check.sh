@@ -25,9 +25,12 @@
 #                          for 9:30 PM)
 #
 # Local time is derived from Open-Meteo's response for your coordinates,
-# so DST handles itself. The workflow fires every 30 minutes; out-of-
-# window firings exit early without writing state, so only morning and
-# evening firings produce commits and notifications.
+# so DST handles itself. The workflow fires every 30 minutes; each
+# local day has a morning and an evening slot, and the script records
+# in state.json which slot-dates it has already handled. That makes
+# the notification robust to GitHub Actions cron drift — if the
+# nominally-6:00 firing is delayed past an old narrow window, whichever
+# firing actually lands inside the slot still notifies for the day.
 #
 # Internal env (set by the workflow to distinguish custom config from
 # the baked-in demo defaults — empty means "using the default"):
@@ -179,49 +182,78 @@ fetch_forecast() {
 # GitHub Actions cron is UTC-only, but we want notifications at a
 # *local* morning and evening hour. The workflow fires every 30 min; we
 # use Open-Meteo's `utc_offset_seconds` (already in the forecast JSON)
-# to convert that into local time and return 0 only on the firings that
-# fall within 15 minutes of MORNING_HOUR or EVENING_HOUR. All other
-# firings exit main() without touching state, so the state commit is
-# skipped and the Actions tab stays quiet.
+# to convert that into local time.
 #
-# The 15-minute window matches our 30-minute cron exactly: for any
-# whole-or-half target hour (e.g. 6, 6.5, 21.5), only one cron firing
-# falls within ±15 min, so we never double-notify. DST flips are
-# automatic since the offset comes back fresh with every forecast.
+# Each local day has two slots:
+#   morning slot = [MORNING_HOUR, EVENING_HOUR)
+#   evening slot = [EVENING_HOUR, next day's MORNING_HOUR)
+#
+# A firing proceeds iff the current local time is inside a slot whose
+# date has not yet been recorded in state. state.json then remembers
+# which local date we last handled for each slot, so subsequent firings
+# inside the same slot exit early.
+#
+# This is robust to GitHub Actions cron drift: even when the 6:00
+# firing is delayed to 6:16 (past the old ±15 min window), the next
+# firing that lands anywhere inside the slot still catches the day.
+# DST is handled automatically because the offset comes back fresh
+# with every forecast.
+#
+# Sets SLOT ("morning" | "evening" | "") and SLOT_DATE (the local date
+# the slot belongs to) when returning 0, so main() can record the slot
+# as handled after the run. FORCE_RUN leaves both empty so test runs
+# don't suppress the next real firing.
 should_run_now() {
   local utc_offset_seconds="$1"
   local morning_hour="${MORNING_HOUR:-6}"
   local evening_hour="${EVENING_HOUR:-21.5}"
 
-  # FORCE_RUN lets a manual workflow_dispatch (or local invocation) bypass
-  # the window so you can smoke-test notifications on demand.
+  SLOT=""
+  SLOT_DATE=""
+
   if [ "${FORCE_RUN:-false}" = "true" ]; then
-    log "FORCE_RUN=true — skipping time-window check"
+    log "FORCE_RUN=true — skipping slot check"
     return 0
   fi
 
-  local now_utc local_epoch local_minute local_label
+  local now_utc local_epoch local_minute local_label local_date prev_date
   now_utc=$(date -u +%s)
   local_epoch=$((now_utc + utc_offset_seconds))
   local_minute=$(( (local_epoch / 60) % 1440 ))
   [ "$local_minute" -lt 0 ] && local_minute=$((local_minute + 1440))
   local_label=$(printf '%02d:%02d' $((local_minute / 60)) $((local_minute % 60)))
+  local_date=$(jq -rn --argjson e "$local_epoch" '$e | gmtime | strftime("%Y-%m-%d")')
+  prev_date=$(jq -rn --argjson e "$local_epoch" '($e - 86400) | gmtime | strftime("%Y-%m-%d")')
 
-  local target_hour target_min diff
-  for target_hour in "$morning_hour" "$evening_hour"; do
-    target_min=$(awk -v h="$target_hour" 'BEGIN { printf "%.0f", h * 60 }')
-    diff=$(( local_minute - target_min ))
-    diff=${diff#-}
-    # Wrap-around: for targets near midnight, the shortest distance
-    # might cross the 00:00 boundary.
-    [ "$diff" -gt 720 ] && diff=$(( 1440 - diff ))
-    if [ "$diff" -le 15 ]; then
-      log "Local time ${local_label} matches target ${target_hour}h (diff ${diff}min)"
-      return 0
+  local morning_min evening_min
+  morning_min=$(awk -v h="$morning_hour" 'BEGIN { printf "%.0f", h * 60 }')
+  evening_min=$(awk -v h="$evening_hour" 'BEGIN { printf "%.0f", h * 60 }')
+
+  local slot slot_date last_slot_date
+  if [ "$local_minute" -ge "$morning_min" ] && [ "$local_minute" -lt "$evening_min" ]; then
+    slot="morning"
+    slot_date="$local_date"
+    last_slot_date="$LAST_MORNING_SLOT_DATE"
+  else
+    slot="evening"
+    # Pre-dawn hours (before morning_hour) still belong to yesterday's
+    # evening slot, so subtract a day in that case.
+    if [ "$local_minute" -ge "$evening_min" ]; then
+      slot_date="$local_date"
+    else
+      slot_date="$prev_date"
     fi
-  done
+    last_slot_date="$LAST_EVENING_SLOT_DATE"
+  fi
 
-  log "Local time ${local_label} out of window (morning=${morning_hour}h, evening=${evening_hour}h) — skipping"
+  if [ "$slot_date" != "$last_slot_date" ]; then
+    log "Local time ${local_label} — ${slot} slot for ${slot_date} not yet handled (last: '${last_slot_date:-none}')"
+    SLOT="$slot"
+    SLOT_DATE="$slot_date"
+    return 0
+  fi
+
+  log "Local time ${local_label} — ${slot} slot for ${slot_date} already handled; skipping"
   return 1
 }
 
@@ -473,15 +505,19 @@ send_ntfy() {
 # treated as empty-state, which makes fresh forks work on first run.
 load_state() {
   if [ -f "$STATE_FILE" ]; then
-    LAST_VERDICT=$(jq -r          '.last_verdict          // ""' "$STATE_FILE" 2>/dev/null || echo "")
-    LAST_NOTIFIED_VERDICT=$(jq -r '.last_notified_verdict // ""' "$STATE_FILE" 2>/dev/null || echo "")
-    LAST_NOTIFIED_AT=$(jq -r      '.last_notified_at      // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_VERDICT=$(jq -r            '.last_verdict            // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_NOTIFIED_VERDICT=$(jq -r   '.last_notified_verdict   // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_NOTIFIED_AT=$(jq -r        '.last_notified_at        // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_MORNING_SLOT_DATE=$(jq -r  '.last_morning_slot_date  // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    LAST_EVENING_SLOT_DATE=$(jq -r  '.last_evening_slot_date  // ""' "$STATE_FILE" 2>/dev/null || echo "")
   else
     LAST_VERDICT=""
     LAST_NOTIFIED_VERDICT=""
     LAST_NOTIFIED_AT=""
+    LAST_MORNING_SLOT_DATE=""
+    LAST_EVENING_SLOT_DATE=""
   fi
-  log "Loaded state: last_verdict='${LAST_VERDICT}', last_notified='${LAST_NOTIFIED_VERDICT}'"
+  log "Loaded state: last_verdict='${LAST_VERDICT}', last_notified='${LAST_NOTIFIED_VERDICT}', morning_slot='${LAST_MORNING_SLOT_DATE}', evening_slot='${LAST_EVENING_SLOT_DATE}'"
 }
 
 # Returns 0 (notify) or 1 (stay silent). Rule:
@@ -504,6 +540,7 @@ should_notify() {
 save_state() {
   local verdict="$1" notified_verdict="$2" notified_at="$3" location="$4"
   local cache_query="${5:-}" cache_lat="${6:-}" cache_lon="${7:-}" cache_name="${8:-}"
+  local morning_slot_date="${9:-}" evening_slot_date="${10:-}"
   jq -n \
     --arg run "$(date -u +%FT%TZ)" \
     --arg v   "$verdict" \
@@ -514,16 +551,20 @@ save_state() {
     --arg la  "$cache_lat" \
     --arg lo  "$cache_lon" \
     --arg ln  "$cache_name" \
+    --arg msd "$morning_slot_date" \
+    --arg esd "$evening_slot_date" \
     '{
-       last_run_utc:          $run,
-       last_verdict:          $v,
-       last_notified_verdict: $nv,
-       last_notified_at:      $na,
-       location:              $loc,
-       location_query:        $lq,
-       location_lat:          $la,
-       location_lon:          $lo,
-       location_name:         $ln
+       last_run_utc:           $run,
+       last_verdict:           $v,
+       last_notified_verdict:  $nv,
+       last_notified_at:       $na,
+       location:               $loc,
+       location_query:         $lq,
+       location_lat:           $la,
+       location_lon:           $lo,
+       location_name:          $ln,
+       last_morning_slot_date: $msd,
+       last_evening_slot_date: $esd
      }' \
     > "$STATE_FILE"
 }
@@ -548,6 +589,10 @@ main() {
   fi
   log "Resolved location: $location"
 
+  # Load state before the slot check — should_run_now uses
+  # LAST_MORNING_SLOT_DATE / LAST_EVENING_SLOT_DATE for per-day dedup.
+  load_state
+
   log "Fetching forecast..."
   forecast=$(fetch_forecast "$LATITUDE" "$LONGITUDE")
 
@@ -562,8 +607,6 @@ main() {
 
   verdict=$(decide_verdict)
   log "Verdict: $verdict"
-
-  load_state
 
   if should_notify "$verdict"; then
     local precip_category=""
@@ -584,8 +627,19 @@ main() {
     notified_at="$LAST_NOTIFIED_AT"
   fi
 
+  # Record which slot (if any) this run handled so subsequent firings in
+  # the same slot exit early. FORCE_RUN leaves SLOT empty and preserves
+  # the previous dates, so a forced test run can't suppress a real slot.
+  local morning_slot_date="$LAST_MORNING_SLOT_DATE"
+  local evening_slot_date="$LAST_EVENING_SLOT_DATE"
+  case "${SLOT:-}" in
+    morning) morning_slot_date="$SLOT_DATE" ;;
+    evening) evening_slot_date="$SLOT_DATE" ;;
+  esac
+
   save_state "$verdict" "$notified_verdict" "$notified_at" "$location" \
-             "$cache_query" "$cache_lat" "$cache_lon" "$cache_name"
+             "$cache_query" "$cache_lat" "$cache_lon" "$cache_name" \
+             "$morning_slot_date" "$evening_slot_date"
   log "State written to $STATE_FILE"
 }
 
