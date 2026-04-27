@@ -1,5 +1,5 @@
 {
-  "last_run_utc": "2026-04-26T10:16:51Z",
+  "last_run_utc": "2026-04-27T02:18:24Z",
   "last_verdict": "maybe",
   "last_notified_verdict": "maybe",
   "last_notified_at": "2026-04-25T10:15:58Z",
@@ -9,5 +9,5 @@
   "location_lon": "-79.3839347",
   "location_name": "Toronto",
   "last_morning_slot_date": "2026-04-26",
-  "last_evening_slot_date": "2026-04-25"
+  "last_evening_slot_date": "2026-04-26"
 }
