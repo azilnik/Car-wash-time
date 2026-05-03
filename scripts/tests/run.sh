@@ -63,8 +63,9 @@ assert_contains() {
 #   S — wet (snow, code 73), 2mm, 80% probability, cold (-3°C)
 #   F — dry, freezing cold (min -10°C)
 #
-# Pattern length must be ≥ 4 so analyze_forecast finds a full
-# (1 + WINDOW_DAYS) window starting at index 1.
+# Pattern length should be ≥ 7 to fill the full lookahead window;
+# shorter patterns work but the next-clean-window hint and clean-stretch
+# enhancement run out of data to look at.
 make_forecast() {
   local pattern="$1"
   local times=() codes=() precip=() probs=() tmin=() tmax=()
@@ -124,43 +125,102 @@ lead_of()    { printf '%s' "${1#*|}";  }
 echo ""
 echo "## Verdict logic"
 
-# All dry → good. Lead is the simple form regardless of how far the
-# clean stretch extends past the window — by design, since the
-# notification's job is "wash or no", not a forecast widget.
-result=$(run_pattern "DDDD")
+# All dry → good, with the strongest "all week" lead variant.
+result=$(run_pattern "DDDDDDD")
 assert_eq "all-dry → good"            "good"  "$(verdict_of "$result")"
-assert_contains "good lead is the simple form" \
-  "Three clear days ahead. Go for it." "$(lead_of "$result")"
+assert_contains "all-dry lead says 'all week'" \
+  "Clear all week" "$(lead_of "$result")"
+
+# 3 clear days then rain at the end → still good (window met) and
+# lead falls back to the simple form because the stretch is exactly 3.
+result=$(run_pattern "DDDDWWW")
+assert_eq "3 clear then rain → good"  "good"  "$(verdict_of "$result")"
+assert_contains "3-day stretch lead is the simple form" \
+  "Three clear days" "$(lead_of "$result")"
+
+# 5-day clean stretch, then rain → "Clean stretch: 5 days ahead."
+result=$(run_pattern "DDDDDDW")
+assert_eq "5-day stretch → good"      "good"  "$(verdict_of "$result")"
+assert_contains "5-day stretch is named in lead" \
+  "Clean stretch: 5 days" "$(lead_of "$result")"
 
 # Today dry, tomorrow rain → no.
-result=$(run_pattern "DWWD")
+result=$(run_pattern "DWWWDDD")
 assert_eq "rain tomorrow → no"        "no"    "$(verdict_of "$result")"
 assert_contains "no lead names rain"  "Rain"  "$(lead_of "$result")"
-assert_contains "no lead is brief"    "wait it out." "$(lead_of "$result")"
+assert_contains "no lead has wait-it-out" "wait it out." "$(lead_of "$result")"
 
 # Tomorrow dry, but rain inside the 3-day window → maybe.
-result=$(run_pattern "DDWD")
+result=$(run_pattern "DDWDDDD")
 assert_eq "rain inside window → maybe" "maybe" "$(verdict_of "$result")"
 assert_contains "maybe lead names rain" "rain" "$(lead_of "$result")"
 
 # Snow tomorrow.
-result=$(run_pattern "DSDD")
+result=$(run_pattern "DSDDDDD")
 assert_eq "snow tomorrow → no"        "no"    "$(verdict_of "$result")"
 assert_contains "no/snow lead names snow" "Snow" "$(lead_of "$result")"
 
 # Freezing temps (-10°C overnight low) tomorrow → freeze trumps everything.
-result=$(run_pattern "DFDD")
+result=$(run_pattern "DFDDDDD")
 assert_eq "freeze tomorrow → freeze"  "freeze" "$(verdict_of "$result")"
 assert_contains "freeze lead names temp" "-10°C" "$(lead_of "$result")"
 
 # Freeze trumps even rain.
-result=$(run_pattern "DFWW")
+result=$(run_pattern "DFWWWDD")
 assert_eq "freeze + rain → freeze still wins" "freeze" "$(verdict_of "$result")"
 
 # Custom MIN_WASH_TEMP_C disables the freeze warning.
-result=$(MIN_WASH_TEMP_C=-50 run_pattern "DFDD")
+result=$(MIN_WASH_TEMP_C=-50 run_pattern "DFDDDDD")
 assert_eq "freeze with permissive threshold → good" \
   "good" "$(verdict_of "$result")"
+
+# ── Tests: next-clean-window hint ───────────────────────────────────
+echo ""
+echo "## Next-clean-window hint"
+
+# Rain tomorrow, dry rest of week → "no" lead surfaces a multi-day
+# next clean window.
+result=$(run_pattern "DWDDDDD")
+assert_eq "rain tomorrow, dry after → no" "no" "$(verdict_of "$result")"
+assert_contains "no lead surfaces next clean window" \
+  "Next clean window" "$(lead_of "$result")"
+assert_contains "next-clean-window mentions multi-day count" \
+  "(5 days)" "$(lead_of "$result")"
+
+# Long stretch of rain, then 2 dry days at the end.
+result=$(run_pattern "DWWWWDD")
+assert_contains "no lead with 2-day window names it" \
+  "(2 days)" "$(lead_of "$result")"
+
+# Single dry day surrounded by rain → "Next clear day:" rather than
+# "Next clean window: ... (N days)".
+result=$(run_pattern "DWWWDWW")
+assert_contains "no lead with 1-day gap uses 'Next clear day'" \
+  "Next clear day" "$(lead_of "$result")"
+
+# Dry-wet-dry-then-clean — maybe verdict, with next-clean hint.
+result=$(run_pattern "DDWDDDD")
+assert_eq "dry-wet-clean → maybe" "maybe" "$(verdict_of "$result")"
+assert_contains "maybe lead surfaces next clean window" \
+  "Next clean window" "$(lead_of "$result")"
+
+# All-dry forecast: no NEXT_CLEAN_DATE, so the lead is just the base.
+result=$(run_pattern "DDDDDDD")
+[[ "$(lead_of "$result")" != *"Next clean window"* ]] && r="ok" || r="leaked"
+assert_eq "all-dry good lead doesn't include next-clean-window" "ok" "$r"
+
+# ── Tests: clean-streak counting ────────────────────────────────────
+echo ""
+echo "## Clean streak counting"
+
+analyze_forecast "$(make_forecast "DDDDDDD")"
+assert_eq "clean streak (all dry, scan 6 days)" "6" "$CLEAN_STREAK"
+
+analyze_forecast "$(make_forecast "DDDDWDD")"
+assert_eq "clean streak stops at first wet day" "3" "$CLEAN_STREAK"
+
+analyze_forecast "$(make_forecast "DWDDDDD")"
+assert_eq "clean streak is 0 when day 1 is wet" "0" "$CLEAN_STREAK"
 
 # ── Tests: precipitation categories ─────────────────────────────────
 echo ""
@@ -177,29 +237,41 @@ assert_eq "code 0  → precipitation"   "precipitation" "$(precipitation_categor
 echo ""
 echo "## Notification composition"
 
-# Each composition test asserts the body is just the lead — no
-# forecast list, no location line, no click URL. The verdict carries
-# itself; everything else was noise.
-analyze_forecast "$(make_forecast "DDDD")"
+# Each composition test asserts the body is just the (possibly extended)
+# lead — no forecast list, no location line, no click URL. The verdict
+# carries itself; the smart leads add context.
+
+# Good with a 6-day clean stretch → "Clear all week" form, no hint.
+analyze_forecast "$(make_forecast "DDDDDDD")"
 compose_notification "good" ""
-assert_eq "good title"      "☀️ Good day for a wash" "$TITLE"
-assert_eq "good body"       "Three clear days ahead. Go for it." "$BODY"
-assert_eq "good tags"       "car,white_check_mark"   "$TAGS"
+assert_eq "good title"        "☀️ Good day for a wash"        "$TITLE"
+assert_eq "good body"         "Clear all week. Go for it."    "$BODY"
+assert_eq "good tags"         "car,white_check_mark"          "$TAGS"
 
-analyze_forecast "$(make_forecast "DWDD")"
+# No verdict: rain tomorrow, dry rest of week → body extends with the
+# next-clean-window hint.
+analyze_forecast "$(make_forecast "DWDDDDD")"
 compose_notification "no" "rain"
-assert_eq "no title"        "🚫 Skip the wash" "$TITLE"
-assert_eq "no body"         "Rain moving in tomorrow — wait it out." "$BODY"
+assert_eq "no title"          "🚫 Skip the wash" "$TITLE"
+assert_contains "no body has base lead" \
+  "Rain moving in tomorrow — wait it out." "$BODY"
+assert_contains "no body has next-clean-window hint" \
+  "Next clean window" "$BODY"
 
-analyze_forecast "$(make_forecast "DDWD")"
+# Maybe verdict with rain on day 2: body extends with the hint.
+analyze_forecast "$(make_forecast "DDWDDDD")"
 compose_notification "maybe" "rain"
-assert_eq "maybe title"     "🤔 Maybe wash it" "$TITLE"
-assert_eq "maybe body"      "Dry today, expect rain. Your call." "$BODY"
+assert_eq "maybe title"       "🤔 Maybe wash it" "$TITLE"
+assert_contains "maybe body has base lead" \
+  "Dry today, expect rain. Your call." "$BODY"
+assert_contains "maybe body has next-clean-window hint" \
+  "Next clean window" "$BODY"
 
-analyze_forecast "$(make_forecast "DFDD")"
+# Freeze body stays minimal — there's nothing actionable to add.
+analyze_forecast "$(make_forecast "DFDDDDD")"
 compose_notification "freeze" ""
-assert_eq "freeze title"    "🥶 Too cold for a wash" "$TITLE"
-assert_eq "freeze body"     "Overnight low -10°C." "$BODY"
+assert_eq "freeze title"      "🥶 Too cold for a wash" "$TITLE"
+assert_eq "freeze body"       "Overnight low -10°C."   "$BODY"
 
 # ── Tests: should_notify ────────────────────────────────────────────
 echo ""
