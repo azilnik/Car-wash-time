@@ -26,16 +26,16 @@ My car is parked outside year-round. Through a Canadian winter that means road s
 
 ## What You'll Get
 
-Twice a day, a push notification with one of four verdicts:
+Twice a day, a push notification with one of four verdicts. The title is the call; the body is one short line of context — that's it.
 
-| Verdict | Notification | Meaning |
-|---|---|---|
-| **Good** | ☀️ Good day for a wash | No precipitation in the next 3 days. When the dry stretch extends past the window, the body says how long ("Clean stretch: 6 days ahead"). |
-| **Maybe** | 🤔 Maybe wash it | Today is dry, but precipitation is coming. Body includes the next clean window ("Next clean window: Fri onward — 3 days"). |
-| **Skip** | 🚫 Skip the wash | Precipitation tomorrow. Body includes when to wash next instead. |
-| **Too cold** | 🥶 Too cold for a wash | Overnight low below `MIN_WASH_TEMP_C` (default -5 °C). A fresh wash will freeze on the car — locks, doors, paint. Trumps the precipitation verdict. |
+| Verdict | Notification |
+|---|---|
+| **Good** | ☀️ Good day for a wash<br/>_Three clear days ahead. Go for it._ |
+| **Maybe** | 🤔 Maybe wash it<br/>_Dry today, expect rain. Your call._ |
+| **Skip** | 🚫 Skip the wash<br/>_Rain moving in tomorrow — wait it out._ |
+| **Too cold** | 🥶 Too cold for a wash<br/>_Overnight low -12°C._ |
 
-Tap any notification to open a Google weather page for your location.
+The "too cold" verdict fires when tomorrow's overnight low is below `MIN_WASH_TEMP_C` (default -5 °C) — a fresh wash will freeze on the car. Trumps the precipitation verdict. Threshold is configurable; see [Customization](docs/customize.md#tune-the-freeze-warning).
 
 Repeated "skip", "maybe", or "too cold" days don't spam you. You only get notified when the verdict is "good" (actionable) or when it changes from the day before.
 
@@ -78,13 +78,13 @@ That's it. From here on it runs on its own.
 
 ```mermaid
 flowchart LR
-    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>7-day forecast]
+    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>3-day forecast]
     B --> H{Overnight low<br/>< MIN_WASH_TEMP_C?}
     H -->|Yes| I[🥶 Too cold]
     H -->|No| C{Precipitation<br/>in next 3 days?}
-    C -->|None| D[☀️ Good<br/>+ stretch length]
-    C -->|Today dry,<br/>precip later| E[🤔 Maybe<br/>+ next clean window]
-    C -->|Precip tomorrow| F[🚫 Skip<br/>+ next clean window]
+    C -->|None| D[☀️ Good]
+    C -->|Today dry,<br/>precip later| E[🤔 Maybe]
+    C -->|Precip tomorrow| F[🚫 Skip]
     D --> G[ntfy.sh<br/>push to phone]
     E --> G
     F --> G

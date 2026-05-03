@@ -57,11 +57,10 @@ readonly PRECIPITATION_CODES="51 53 55 56 57 61 63 65 66 67 71 73 75 77 80 81 82
 # two days, so someone who washes today gets three clear days of payoff.
 readonly WINDOW_DAYS=3
 
-# How many forecast days to fetch and scan. We use the first WINDOW_DAYS
-# to decide the verdict, and the remaining LOOKAHEAD_DAYS - WINDOW_DAYS
-# to find the next clean stretch when telling the user "skip today,
-# Friday looks better". Open-Meteo gives 7 days for free.
-readonly LOOKAHEAD_DAYS=7
+# How many forecast days to request from Open-Meteo. We only inspect
+# WINDOW_DAYS for the verdict, but pull a couple of extra days so a
+# future change has data to work with without needing a new API call.
+readonly LOOKAHEAD_DAYS=4
 
 # ── Logging helpers ───────────────────────────────────────────────────
 # Log to stderr so command substitution on functions below never
@@ -270,34 +269,6 @@ should_run_now() {
 }
 
 # ── Weather code lookups ─────────────────────────────────────────────
-# Short, human-readable English description for a WMO weather code.
-weather_description() {
-  case "$1" in
-    0)        echo "Clear" ;;
-    1)        echo "Mostly clear" ;;
-    2)        echo "Partly cloudy" ;;
-    3)        echo "Overcast" ;;
-    45|48)    echo "Fog" ;;
-    51|53|55) echo "Drizzle" ;;
-    56|57)    echo "Freezing drizzle" ;;
-    61)       echo "Light rain" ;;
-    63)       echo "Rain" ;;
-    65)       echo "Heavy rain" ;;
-    66|67)    echo "Freezing rain" ;;
-    71)       echo "Light snow" ;;
-    73)       echo "Snow" ;;
-    75)       echo "Heavy snow" ;;
-    77)       echo "Snow grains" ;;
-    80)       echo "Light showers" ;;
-    81)       echo "Showers" ;;
-    82)       echo "Heavy showers" ;;
-    85|86)    echo "Snow showers" ;;
-    95)       echo "Thunderstorm" ;;
-    96|99)    echo "Thunderstorm with hail" ;;
-    *)        echo "Unknown" ;;
-  esac
-}
-
 # Bucket a WMO weather code into a short noun phrase for use inside a
 # notification sentence ("rain moving in tomorrow", "expect snow"). We
 # collapse the 20-odd wet codes into the handful of buckets a driver
@@ -316,38 +287,6 @@ precipitation_category() {
     96|99)                      echo "hail" ;;
     *)                          echo "precipitation" ;;
   esac
-}
-
-# Single emoji for a WMO weather code, to give each forecast line a
-# glanceable visual cue.
-weather_emoji() {
-  case "$1" in
-    0|1)                  echo "☀️"  ;;
-    2)                    echo "⛅"  ;;
-    3)                    echo "☁️"  ;;
-    45|48)                echo "🌫️" ;;
-    51|53|55|61|63|65|80|81|82) echo "🌧️" ;;
-    56|57|66|67)                echo "🧊"  ;;
-    71|73|75|77|85|86)    echo "🌨️" ;;
-    95|96|99)             echo "⛈️"  ;;
-    *)                    echo "❓"  ;;
-  esac
-}
-
-# Given a YYYY-MM-DD, return "Tomorrow" if it's tomorrow, "Today" if
-# it's today, else a short day name like "Fri". Date arithmetic goes
-# through jq (already a hard dep) so this works under both GNU date
-# (CI) and BSD date (macOS dev machines).
-day_label() {
-  local target="$1"
-  local today tomorrow
-  today=$(date -u +%Y-%m-%d)
-  tomorrow=$(jq -rn '(now + 86400) | gmtime | strftime("%Y-%m-%d")')
-
-  if   [ "$target" = "$tomorrow" ]; then echo "Tomorrow"
-  elif [ "$target" = "$today"    ]; then echo "Today"
-  else jq -rn --arg d "$target" '($d + "T00:00:00Z") | fromdateiso8601 | gmtime | strftime("%a")'
-  fi
 }
 
 # Returns 0 if the day at index $1 in $forecast is "wet", non-zero
@@ -372,27 +311,18 @@ day_is_wet() {
 }
 
 # ── Analysis ─────────────────────────────────────────────────────────
-# Walks days 1..WINDOW_DAYS (tomorrow onwards) of the forecast for the
-# verdict, then days 1..LOOKAHEAD_DAYS-1 to surface a "next clean
-# window" hint when the verdict is no/maybe and a "clean stretch"
-# count when the verdict is good.
+# Walks days 1..WINDOW_DAYS (tomorrow onwards) of the forecast and sets
+# globals used by decide_verdict and compose_notification:
 #
-# Sets globals used by decide_verdict and compose_notification:
-#
-#   TOMORROW_WET     — bool, is day 1 wet?
-#   ANY_WET          — bool, is any day in the WINDOW_DAYS window wet?
-#   TOMORROW_CODE    — WMO code for tomorrow (empty when dry)
-#   FIRST_WET_CODE   — WMO code for the first wet day in the window,
-#                      used to describe what's coming on a "maybe" day
-#   CLEAN_STREAK     — count of consecutive dry days starting at day 1
-#                      (capped at LOOKAHEAD_DAYS-1)
-#   NEXT_CLEAN_DATE  — first date (YYYY-MM-DD) of a dry day after the
-#                      WINDOW_DAYS window (empty if none in lookahead)
-#   NEXT_CLEAN_RUN   — length of that next clean stretch
-#   FREEZE_WARN      — bool, is the overnight low (= tomorrow's min)
-#                      below MIN_WASH_TEMP_C? Set so callers can warn
-#                      that a fresh wash will freeze on the car.
-#   FREEZE_TEMP      — the actual temperature triggering the warning
+#   TOMORROW_WET    — bool, is day 1 wet?
+#   ANY_WET         — bool, is any day in the window wet?
+#   TOMORROW_CODE   — WMO code for tomorrow (empty when dry)
+#   FIRST_WET_CODE  — WMO code for the first wet day in the window,
+#                     used to describe what's coming on a "maybe" day
+#   FREEZE_WARN     — bool, is the overnight low (= tomorrow's min)
+#                     below MIN_WASH_TEMP_C? Set so callers can warn
+#                     that a fresh wash will freeze on the car.
+#   FREEZE_TEMP     — the actual temperature triggering the warning
 analyze_forecast() {
   local forecast="$1"
   local min_wash_temp="${MIN_WASH_TEMP_C:--5}"
@@ -401,25 +331,11 @@ analyze_forecast() {
   ANY_WET=false
   TOMORROW_CODE=""
   FIRST_WET_CODE=""
-  CLEAN_STREAK=0
-  NEXT_CLEAN_DATE=""
-  NEXT_CLEAN_RUN=0
   FREEZE_WARN=false
   FREEZE_TEMP=""
 
-  local available
-  available=$(echo "$forecast" | jq -r '.daily.time | length')
-
-  # Loop state:
-  #   saw_wet              — true once we've passed any wet day; gates
-  #                          both CLEAN_STREAK (must stop counting) and
-  #                          NEXT_CLEAN_DATE (must come after a wet day).
-  #   saw_clean_after_wet  — true once we've recorded NEXT_CLEAN_DATE;
-  #                          when the next wet day arrives, that ends
-  #                          the run and we exit the loop.
   local i date code precip prob status
-  local saw_wet=false saw_clean_after_wet=false
-  for i in $(seq 1 "$((available - 1))"); do
+  for i in $(seq 1 "$WINDOW_DAYS"); do
     date=$(echo   "$forecast" | jq -r ".daily.time[$i]")
     code=$(echo   "$forecast" | jq -r ".daily.weather_code[$i]")
     precip=$(echo "$forecast" | jq -r ".daily.precipitation_sum[$i]")
@@ -428,41 +344,17 @@ analyze_forecast() {
     local is_wet=false
     if day_is_wet "$forecast" "$i"; then
       is_wet=true
-    fi
-
-    if [ "$is_wet" = true ]; then
-      if [ "$saw_clean_after_wet" = true ]; then
-        # We already found the next clean window; this wet day ends it.
-        break
-      fi
-      saw_wet=true
-      if [ "$i" -le "$WINDOW_DAYS" ]; then
-        ANY_WET=true
-        [ -z "$FIRST_WET_CODE" ] && FIRST_WET_CODE="$code"
-        if [ "$i" = 1 ]; then
-          TOMORROW_WET=true
-          TOMORROW_CODE="$code"
-        fi
-      fi
-    else
-      if [ "$saw_wet" = false ]; then
-        # Day 1 onward, uninterrupted dry streak.
-        CLEAN_STREAK=$((CLEAN_STREAK + 1))
-      else
-        # First dry day after a wet break — that's the next clean window.
-        if [ "$saw_clean_after_wet" = false ]; then
-          NEXT_CLEAN_DATE="$date"
-          saw_clean_after_wet=true
-        fi
-        NEXT_CLEAN_RUN=$((NEXT_CLEAN_RUN + 1))
+      ANY_WET=true
+      [ -z "$FIRST_WET_CODE" ] && FIRST_WET_CODE="$code"
+      if [ "$i" = 1 ]; then
+        TOMORROW_WET=true
+        TOMORROW_CODE="$code"
       fi
     fi
 
     status="dry"
     [ "$is_wet" = true ] && status="wet"
-    if [ "$i" -le "$WINDOW_DAYS" ]; then
-      log "$date: code=$code precip=${precip}mm prob=${prob}% ($status)"
-    fi
+    log "$date: code=$code precip=${precip}mm prob=${prob}% ($status)"
   done
 
   # Freeze check: tomorrow's overnight low (which is when a fresh wash
@@ -501,105 +393,37 @@ decide_verdict() {
 }
 
 # ── Message composition ──────────────────────────────────────────────
-# Builds a human-readable 3-line forecast list from the forecast JSON.
-# Each line uses the day label, a weather emoji, and a short English
-# description. Precipitation probability is appended only when it's
-# notable (>30%), to avoid "(5%)" noise on clear days.
-compose_forecast_lines() {
-  local forecast="$1"
-  local lines="" i date code prob label desc emoji line
-  for i in $(seq 1 "$WINDOW_DAYS"); do
-    date=$(echo "$forecast" | jq -r ".daily.time[$i]")
-    code=$(echo "$forecast" | jq -r ".daily.weather_code[$i]")
-    prob=$(echo "$forecast" | jq -r ".daily.precipitation_probability_max[$i]")
-
-    label=$(day_label "$date")
-    desc=$(weather_description "$code")
-    emoji=$(weather_emoji "$code")
-
-    if [ "${prob:-0}" -gt 30 ]; then
-      line=$(printf '%s: %s %s (%s%%)' "$label" "$emoji" "$desc" "$prob")
-    else
-      line=$(printf '%s: %s %s' "$label" "$emoji" "$desc")
-    fi
-
-    if [ -z "$lines" ]; then
-      lines="$line"
-    else
-      lines=$(printf '%s\n%s' "$lines" "$line")
-    fi
-  done
-  printf '%s' "$lines"
-}
-
-# Compose the lead sentence(s) for each verdict, mixing in the
-# extended-forecast hints from analyze_forecast (clean streak, next
-# clean window) so the user actually learns when to wash next instead
-# of just "skip it".
+# The verdict is the message. Title carries the wash / no-wash call;
+# body adds one short line of context (what's coming, or how cold).
+# We deliberately don't include a location line, a multi-day forecast
+# list, or a tap-to-open URL — the point of the notification is the
+# verdict, not a forecast widget.
 #
-# `category` names the type of precipitation driving the verdict (one of
+# `category` is the precipitation type driving the verdict (one of
 # "rain", "snow", "freezing rain", "thunderstorms", "hail",
 # "precipitation"). Ignored for "good" and "freeze".
 compose_lead() {
   local verdict="$1" category="$2"
-  local next_hint=""
-  if [ -n "$NEXT_CLEAN_DATE" ]; then
-    local next_label
-    next_label=$(day_label "$NEXT_CLEAN_DATE")
-    if [ "$NEXT_CLEAN_RUN" -ge 2 ]; then
-      next_hint=$(printf 'Next clean window: %s onward (%d days).' \
-        "$next_label" "$NEXT_CLEAN_RUN")
-    else
-      next_hint=$(printf 'Next clear day: %s.' "$next_label")
-    fi
-  fi
-
   case "$verdict" in
     good)
-      if [ "$CLEAN_STREAK" -ge "$LOOKAHEAD_DAYS" ] || \
-         [ "$CLEAN_STREAK" -ge $((LOOKAHEAD_DAYS - 1)) ]; then
-        printf 'Clear all week. Go for it.'
-      elif [ "$CLEAN_STREAK" -ge 5 ]; then
-        printf 'Clean stretch: %d days ahead. Go for it.' "$CLEAN_STREAK"
-      elif [ "$CLEAN_STREAK" -ge 4 ]; then
-        printf '%d clear days ahead. Go for it.' "$CLEAN_STREAK"
-      else
-        printf 'Three clear days ahead. Go for it.'
-      fi
+      printf 'Three clear days ahead. Go for it.'
       ;;
     maybe)
-      local base
-      base=$(printf 'Dry today, expect %s. Your call.' "$category")
-      if [ -n "$next_hint" ]; then
-        printf '%s %s' "$base" "$next_hint"
-      else
-        printf '%s' "$base"
-      fi
+      printf 'Dry today, expect %s. Your call.' "$category"
       ;;
     no)
-      local base
-      base=$(printf '%s moving in tomorrow — wait it out.' "${category^}")
-      if [ -n "$next_hint" ]; then
-        printf '%s %s' "$base" "$next_hint"
-      else
-        printf '%s' "$base"
-      fi
+      printf '%s moving in tomorrow — wait it out.' "${category^}"
       ;;
     freeze)
-      local temp_int="${FREEZE_TEMP%%.*}"
-      printf 'Overnight low %s°C — a wash will freeze on the car. Wait for a warmer day.' \
-        "$temp_int"
+      printf 'Overnight low %s°C.' "${FREEZE_TEMP%%.*}"
       ;;
   esac
 }
 
-# Sets TITLE, BODY, TAGS, CLICK_URL globals with the human-friendly
-# notification content. Title leads with a verdict emoji and stays
-# short; body is the lead sentence, a "📍 location" line (omitted if
-# unknown), a blank line, then the 3-day forecast list. CLICK_URL is
-# what ntfy opens when the notification is tapped.
+# Sets TITLE, BODY, TAGS for the notification. Title is verdict +
+# emoji; body is the single lead sentence.
 compose_notification() {
-  local verdict="$1" category="$2" location="$3" forecast_lines="$4" lead
+  local verdict="$1" category="$2"
 
   case "$verdict" in
     good)
@@ -623,54 +447,15 @@ compose_notification() {
       ;;
   esac
 
-  lead=$(compose_lead "$verdict" "$category")
-
-  if [ -n "$location" ] && [ "$location" != "Unknown" ]; then
-    BODY=$(printf '%s\n📍 %s\n\n%s' "$lead" "$location" "$forecast_lines")
-  else
-    BODY=$(printf '%s\n\n%s' "$lead" "$forecast_lines")
-  fi
-
-  # Tap-to-open: a Google search lands on a familiar weather widget no
-  # matter what country / device the user is on. Prefer the resolved
-  # city name; fall back to the typed query, then to lat/lon.
-  local query
-  if [ -n "$location" ] && [ "$location" != "Unknown" ]; then
-    query="weather $location"
-  elif [ -n "${LOCATION:-}" ]; then
-    query="weather ${LOCATION}"
-  else
-    query="weather ${LATITUDE},${LONGITUDE}"
-  fi
-  CLICK_URL="https://www.google.com/search?q=$(url_encode "$query")"
-}
-
-# Minimal URL encoder — handles spaces, commas, and the punctuation
-# that shows up in our typical inputs (city names, street addresses).
-# We intentionally don't shell out to a heavier dep just for this.
-url_encode() {
-  local string="$1" out="" i char
-  for (( i=0; i<${#string}; i++ )); do
-    char="${string:i:1}"
-    case "$char" in
-      [a-zA-Z0-9.~_-]) out+="$char" ;;
-      *)               out+=$(printf '%%%02X' "'$char") ;;
-    esac
-  done
-  printf '%s' "$out"
+  BODY=$(compose_lead "$verdict" "$category")
 }
 
 # ── Notifier ─────────────────────────────────────────────────────────
-# Posts to ntfy with title, body, tags, and an optional Click URL that
-# tells ntfy where to send the user when they tap the notification.
-# We point at a Google weather search for the resolved location, which
-# renders a familiar forecast widget on iOS / Android / desktop alike.
 send_ntfy() {
-  local title="$1" body="$2" tags="$3" click_url="${4:-}"
-  local headers=( -H "Title: ${title}" -H "Tags: ${tags}" )
-  [ -n "$click_url" ] && headers+=( -H "Click: ${click_url}" )
+  local title="$1" body="$2" tags="$3"
   curl -sf \
-    "${headers[@]}" \
+    -H "Title: ${title}" \
+    -H "Tags: ${tags}" \
     -d "${body}" \
     "${NTFY_URL}/${NTFY_TOPIC}" \
     > /dev/null \
@@ -760,7 +545,7 @@ save_state() {
 main() {
   require_config
 
-  local location forecast verdict forecast_lines notified_verdict notified_at
+  local location forecast verdict notified_verdict notified_at
   local cache_query="" cache_lat="" cache_lon="" cache_name=""
 
   if [ -n "${LOCATION:-}" ]; then
@@ -801,10 +586,9 @@ main() {
       no)    precip_category=$(precipitation_category "$TOMORROW_CODE") ;;
       maybe) precip_category=$(precipitation_category "$FIRST_WET_CODE") ;;
     esac
-    forecast_lines=$(compose_forecast_lines "$forecast")
-    compose_notification "$verdict" "$precip_category" "$location" "$forecast_lines"
-    log "Sending notification: $TITLE"
-    send_ntfy "$TITLE" "$BODY" "$TAGS" "$CLICK_URL"
+    compose_notification "$verdict" "$precip_category"
+    log "Sending notification: $TITLE — $BODY"
+    send_ntfy "$TITLE" "$BODY" "$TAGS"
     log "Notification sent."
     notified_verdict="$verdict"
     notified_at=$(date -u +%FT%TZ)
