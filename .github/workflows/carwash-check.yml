@@ -30,6 +30,11 @@ on:
 # Timezone is derived from your coordinates, so you never set it
 # manually and DST is handled automatically.
 #
+# MIN_WASH_TEMP_C is the overnight-low threshold (in °C) below which
+# the script switches to the "🥶 Too cold for a wash" verdict — a
+# wash will freeze on the car. Default -5; set very negative to
+# disable.
+#
 # The LATITUDE/LONGITUDE defaults below point at New York City and a
 # shared public demo ntfy topic, fine for a "does it work?" test,
 # but you'll want your own topic for privacy (anyone subscribed to the
@@ -38,16 +43,17 @@ on:
 # VARS_* mirror the raw repo-variable values so the script can tell
 # whether each setting is customized or falling back to a demo default.
 env:
-  LOCATION:      ${{ vars.LOCATION      }}
-  LATITUDE:      ${{ vars.LATITUDE      || '40.7128'  }}
-  LONGITUDE:     ${{ vars.LONGITUDE     || '-74.0060' }}
-  NTFY_TOPIC:    ${{ vars.NTFY_TOPIC    || 'car-wash-time-demo-a9k2p4xe' }}
-  MORNING_HOUR:  ${{ vars.MORNING_HOUR  || '6' }}
-  EVENING_HOUR:  ${{ vars.EVENING_HOUR  || '21.5' }}
-  FORCE_RUN:     ${{ inputs.force_run }}
-  VARS_LAT:      ${{ vars.LATITUDE      }}
-  VARS_LON:      ${{ vars.LONGITUDE     }}
-  VARS_TOPIC:    ${{ vars.NTFY_TOPIC    }}
+  LOCATION:         ${{ vars.LOCATION         }}
+  LATITUDE:         ${{ vars.LATITUDE         || '40.7128'  }}
+  LONGITUDE:        ${{ vars.LONGITUDE        || '-74.0060' }}
+  NTFY_TOPIC:       ${{ vars.NTFY_TOPIC       || 'car-wash-time-demo-a9k2p4xe' }}
+  MORNING_HOUR:     ${{ vars.MORNING_HOUR     || '6' }}
+  EVENING_HOUR:     ${{ vars.EVENING_HOUR     || '21.5' }}
+  MIN_WASH_TEMP_C:  ${{ vars.MIN_WASH_TEMP_C  || '-5' }}
+  FORCE_RUN:        ${{ inputs.force_run }}
+  VARS_LAT:         ${{ vars.LATITUDE         }}
+  VARS_LON:         ${{ vars.LONGITUDE        }}
+  VARS_TOPIC:       ${{ vars.NTFY_TOPIC       }}
 
 # We need contents:write to commit state.json back to main after each
 # run. That commit is both how we dedupe notifications across runs and

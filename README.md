@@ -26,15 +26,20 @@ My car is parked outside year-round. Through a Canadian winter that means road s
 
 ## What You'll Get
 
-Twice a day, a push notification with one of three verdicts:
+Twice a day, a push notification with one of four verdicts. The title is the call; the body is a single short line of context — what's coming, when it clears, or how cold.
 
-| Verdict | Notification | Meaning |
-|---|---|---|
-| **Good** | ☀️ Good day for a wash | No precipitation in the next 3 days. Go for it. |
-| **Maybe** | 🤔 Maybe wash it | Today is dry, but precipitation is coming. Your call. |
-| **Skip** | 🚫 Skip the wash | Precipitation tomorrow. Skip it. |
+| Verdict | Notification |
+|---|---|
+| **Good** | ☀️ Good day for a wash<br/>_Three clear days ahead. Go for it._<br/>_Clean stretch: 5 days ahead. Go for it._<br/>_Clear all week. Go for it._ |
+| **Maybe** | 🤔 Maybe wash it<br/>_Dry today, expect rain. Your call. Next clean window: Thu onward (3 days)._ |
+| **Skip** | 🚫 Skip the wash<br/>_Rain moving in tomorrow — wait it out. Next clean window: Wed onward (4 days)._ |
+| **Too cold** | 🥶 Too cold for a wash<br/>_Overnight low -12°C._ |
 
-Repeated "skip" or "maybe" days don't spam you. You only get notified when the verdict is "good" (actionable) or when it changes from the day before.
+The body adapts to the forecast: `Good` says how long the clean stretch lasts when it extends past the 3-day window; `Maybe` and `Skip` add the next clean window when one fits in the lookahead. No location line, no multi-day forecast list, no tap-target — the verdict is the message.
+
+The "too cold" verdict fires when tomorrow's overnight low is below `MIN_WASH_TEMP_C` (default -5 °C) — a fresh wash will freeze on the car. Trumps the precipitation verdict. Threshold is configurable; see [Customization](docs/customize.md#tune-the-freeze-warning).
+
+Repeated "skip", "maybe", or "too cold" days don't spam you. You only get notified when the verdict is "good" (actionable) or when it changes from the day before.
 
 ## Get It Running in 5 Minutes
 
@@ -75,21 +80,25 @@ That's it. From here on it runs on its own.
 
 ```mermaid
 flowchart LR
-    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>3-day forecast]
-    B --> C{Precipitation<br/>in next 3 days?}
+    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>7-day forecast]
+    B --> H{Overnight low<br/>< MIN_WASH_TEMP_C?}
+    H -->|Yes| I[🥶 Too cold]
+    H -->|No| C{Precipitation<br/>in next 3 days?}
     C -->|None| D[☀️ Good]
     C -->|Today dry,<br/>precip later| E[🤔 Maybe]
     C -->|Precip tomorrow| F[🚫 Skip]
     D --> G[ntfy.sh<br/>push to phone]
     E --> G
     F --> G
+    I --> G
 
     style D fill:#d4edda,stroke:#28a745,color:#000
     style E fill:#fff3cd,stroke:#ffc107,color:#000
     style F fill:#f8d7da,stroke:#dc3545,color:#000
+    style I fill:#cfe2ff,stroke:#0d6efd,color:#000
 ```
 
-The script checks for rain, snow, drizzle, freezing rain, and thunderstorms using [WMO weather codes](https://open-meteo.com/en/docs#weather-code). The whole thing is a single bash script in [`scripts/check.sh`](scripts/check.sh).
+The script checks for rain, snow, drizzle, freezing rain, and thunderstorms using [WMO weather codes](https://open-meteo.com/en/docs#weather-code), plus the overnight temperature for the freeze warning. The whole thing is a single bash script in [`scripts/check.sh`](scripts/check.sh) — see [`scripts/tests/run.sh`](scripts/tests/run.sh) for the test suite that exercises every verdict.
 
 ## Going Deeper
 

@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/test.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - ".github/workflows/test.yml"
+
+# This is a fast, offline test run — no need to grant write permissions.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Lint check.sh and tests with shellcheck
+        # --severity=warning skips noisy info-level findings while still
+        # catching real bugs. -x follows `source` so the test file knows
+        # which globals come from check.sh.
+        run: shellcheck --severity=warning -x scripts/check.sh scripts/tests/run.sh
+
+      - name: Run test suite
+        run: bash scripts/tests/run.sh
