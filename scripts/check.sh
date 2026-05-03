@@ -220,7 +220,6 @@ should_run_now() {
   now_utc=$(date -u +%s)
   local_epoch=$((now_utc + utc_offset_seconds))
   local_minute=$(( (local_epoch / 60) % 1440 ))
-  [ "$local_minute" -lt 0 ] && local_minute=$((local_minute + 1440))
   local_label=$(printf '%02d:%02d' $((local_minute / 60)) $((local_minute % 60)))
   local_date=$(jq -rn --argjson e "$local_epoch" '$e | gmtime | strftime("%Y-%m-%d")')
   prev_date=$(jq -rn --argjson e "$local_epoch" '($e - 86400) | gmtime | strftime("%Y-%m-%d")')
@@ -314,9 +313,8 @@ weather_emoji() {
     2)                    echo "⛅"  ;;
     3)                    echo "☁️"  ;;
     45|48)                echo "🌫️" ;;
-    51|53|55|61|63|80|81) echo "🌧️" ;;
-    65|82)                echo "🌧️" ;;
-    56|57|66|67)          echo "🧊"  ;;
+    51|53|55|61|63|65|80|81|82) echo "🌧️" ;;
+    56|57|66|67)                echo "🧊"  ;;
     71|73|75|77|85|86)    echo "🌨️" ;;
     95|96|99)             echo "⛈️"  ;;
     *)                    echo "❓"  ;;
@@ -368,12 +366,12 @@ analyze_forecast() {
     prob=$(echo   "$forecast" | jq -r ".daily.precipitation_probability_max[$i]")
 
     is_wet=false
-    if echo " $PRECIPITATION_CODES " | grep -q " $code "; then
+    if [[ " $PRECIPITATION_CODES " == *" $code "* ]]; then
       is_wet=true
     fi
 
     # precipitation_sum is a float; bash integer comparison needs the int part.
-    precip_int=$(echo "$precip" | cut -d. -f1)
+    precip_int="${precip%%.*}"
     if [ "${precip_int:-0}" -gt 0 ] || [ "${prob:-0}" -gt 30 ]; then
       is_wet=true
     fi
