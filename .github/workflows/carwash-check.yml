@@ -64,8 +64,10 @@ permissions:
 jobs:
   check-weather:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out code
+        uses: actions/checkout@v6
 
       - name: Check weather and notify
         run: bash scripts/check.sh
