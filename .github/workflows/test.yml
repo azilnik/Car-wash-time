@@ -18,8 +18,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out code
+        uses: actions/checkout@v6
 
       - name: Lint check.sh and tests with shellcheck
         # --severity=warning skips noisy info-level findings while still
