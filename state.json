@@ -1,13 +1,13 @@
 {
-  "last_run_utc": "2026-07-25T03:45:44Z",
-  "last_verdict": "maybe",
-  "last_notified_verdict": "maybe",
-  "last_notified_at": "2026-07-23T04:47:11Z",
+  "last_run_utc": "2026-07-25T10:08:02Z",
+  "last_verdict": "no",
+  "last_notified_verdict": "no",
+  "last_notified_at": "2026-07-25T10:08:02Z",
   "location": "Toronto",
   "location_query": "Toronto, Ontario",
   "location_lat": "43.6534817",
   "location_lon": "-79.3839347",
   "location_name": "Toronto",
-  "last_morning_slot_date": "2026-07-24",
+  "last_morning_slot_date": "2026-07-25",
   "last_evening_slot_date": "2026-07-24"
 }
