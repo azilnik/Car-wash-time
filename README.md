@@ -30,7 +30,7 @@ Twice a day, a push notification with one of four verdicts. The title is the cal
 
 | Verdict | Notification |
 |---|---|
-| **Good** | ☀️ Good day for a wash<br/>_Three clear days ahead. Go for it._<br/>_Clean stretch: 5 days ahead. Go for it._<br/>_Clear all week. Go for it._ |
+| **Good** | ☀️ Good day for a wash<br/>_Three clear days ahead. Go for it._<br/>_Clean stretch: 4 days ahead. Go for it._<br/>_Clear all week. Go for it._ |
 | **Maybe** | 🤔 Maybe wash it<br/>_Dry today, expect rain. Your call. Next clean window: Thu onward (3 days)._ |
 | **Skip** | 🚫 Skip the wash<br/>_Rain moving in tomorrow — wait it out. Next clean window: Wed onward (4 days)._ |
 | **Too cold** | 🥶 Too cold for a wash<br/>_Overnight low -12°C._ |

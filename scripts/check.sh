@@ -59,7 +59,7 @@ readonly WINDOW_DAYS=3
 
 # How many forecast days to fetch and scan. WINDOW_DAYS gates the
 # verdict; the extra days power the "next clean window: Fri onward"
-# hint and the "clean stretch: 5 days ahead" message extension.
+# hint and the "clean stretch: 4+ days ahead" message extension.
 # Open-Meteo gives 7 days for free.
 readonly LOOKAHEAD_DAYS=7
 
@@ -492,10 +492,8 @@ compose_lead() {
       # gets a 7-day forecast anyway.
       if [ "$CLEAN_STREAK" -ge $((LOOKAHEAD_DAYS - 1)) ]; then
         printf 'Clear all week. Go for it.'
-      elif [ "$CLEAN_STREAK" -ge 5 ]; then
-        printf 'Clean stretch: %d days ahead. Go for it.' "$CLEAN_STREAK"
       elif [ "$CLEAN_STREAK" -ge 4 ]; then
-        printf '%d clear days ahead. Go for it.' "$CLEAN_STREAK"
+        printf 'Clean stretch: %d days ahead. Go for it.' "$CLEAN_STREAK"
       else
         printf 'Three clear days ahead. Go for it.'
       fi
