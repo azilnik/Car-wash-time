@@ -80,7 +80,7 @@ That's it. From here on it runs on its own.
 
 ```mermaid
 flowchart LR
-    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>7-day forecast]
+    A[GitHub Actions<br/>every 30 min · notifies<br/>6am + 9:30pm local] --> B[Open-Meteo<br/>7-day forecast]
     B --> H{Overnight low<br/>< MIN_WASH_TEMP_C?}
     H -->|Yes| I[🥶 Too cold]
     H -->|No| C{Precipitation<br/>in next 3 days?}
