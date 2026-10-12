@@ -74,6 +74,8 @@ GitHub disables Actions on forks by default. Open the **Actions** tab on your fo
 
 Go to **Actions → Daily Car Wash Check → Run workflow**. You should get a notification within a minute.
 
+> **Tip:** On repeat test runs, check **Force run** before clicking Run workflow — without it the workflow only notifies during your morning and evening slots, so a re-run outside those windows produces no notification.
+
 That's it. From here on it runs on its own.
 
 ## How It Works
