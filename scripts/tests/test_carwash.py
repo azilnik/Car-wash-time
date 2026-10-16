@@ -138,19 +138,19 @@ class ThresholdTests(unittest.TestCase):
         self.assertEqual(c.decide(self.fc_with(0.1), TODAY).kind, "good")
 
     def test_amount_over_wet_mm_is_wet(self):
-        self.assertEqual(c.decide(self.fc_with(1.0), TODAY).kind, "no")
+        self.assertEqual(c.decide(self.fc_with(1.5), TODAY).kind, "no")
 
     def test_in_between_needs_ensemble_support(self):
-        self.assertEqual(c.decide(self.fc_with(0.5), TODAY).kind, "good")
+        self.assertEqual(c.decide(self.fc_with(0.8), TODAY).kind, "good")
         n = 24 * 8
         wet = [0.0] * 24 + [0.0] * 14 + [2.0] + [0.0] * (n - 39)
         dry = [0.0] * n
-        ens = make_ens({"gem_global_ensemble": [wet, wet, dry], "ecmwf_ifs025_ensemble": [wet, dry, dry, dry]})
-        # mean of 2/3 and 1/4 = 0.458 < 0.5 → dry
-        self.assertEqual(c.decide(self.fc_with(0.5, ens), TODAY).kind, "good")
-        ens = make_ens({"gem_global_ensemble": [wet, wet, dry], "ecmwf_ifs025_ensemble": [wet, wet, dry, dry]})
-        # mean of 2/3 and 2/4 = 0.583 → wet
-        self.assertEqual(c.decide(self.fc_with(0.5, ens), TODAY).kind, "no")
+        ens = make_ens({"gem_global_ensemble": [wet, dry, dry, dry], "ecmwf_ifs025_ensemble": [wet] + [dry] * 9})
+        # mean of 1/4 and 1/10 = 0.175 < 0.3 → dry
+        self.assertEqual(c.decide(self.fc_with(0.8, ens), TODAY).kind, "good")
+        ens = make_ens({"gem_global_ensemble": [wet, wet, dry, dry], "ecmwf_ifs025_ensemble": [wet] + [dry] * 9})
+        # mean of 2/4 and 1/10 = 0.3 → wet
+        self.assertEqual(c.decide(self.fc_with(0.8, ens), TODAY).kind, "no")
 
     def test_ensemble_alone_cannot_override_bone_dry_models(self):
         n = 24 * 8

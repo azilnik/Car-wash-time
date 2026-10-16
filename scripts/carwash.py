@@ -82,15 +82,15 @@ class Thresholds:
     """Knobs for calling a day wet. Defaults come from the backtest
     (scripts/eval/backtest.py); see docs/accuracy.md for the numbers."""
 
-    # A day is wet when the blended models expect at least this much
+    # A day is wet when the median model expects at least this much
     # precipitation (mm) over the hours that matter...
-    wet_mm: float = 1.0
-    # ...or when this share of ensemble members (0-1) produce at least
-    # `ensemble_mm` over the same hours.
-    wet_prob: float = 0.5
-    ensemble_mm: float = 0.5
-    # Below this many mm a day is dry no matter what the probability
-    # says. Stops "40% chance of a 0.1 mm sprinkle" from killing a wash.
+    wet_mm: float = 1.5
+    # ...or, between floor_mm and wet_mm, when this share (0-1) of
+    # ensemble members produce at least `ensemble_mm` over the same hours.
+    wet_prob: float = 0.3
+    ensemble_mm: float = 0.2
+    # Below this the day is dry no matter what the probability says.
+    # Stops "40% chance of a 0.1 mm sprinkle" from killing a wash.
     floor_mm: float = 0.2
 
 

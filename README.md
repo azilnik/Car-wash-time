@@ -97,7 +97,7 @@ flowchart LR
     style I fill:#cfe2ff,stroke:#0d6efd,color:#000
 ```
 
-**Accurate forecasts.** Instead of one model's daily summary, the script pulls hourly forecasts from three independent models (Canada's GEM, ECMWF, and NOAA's GFS) plus their ensembles (103 alternate runs). A day counts as wet when the models' median total is at least 1 mm, or when it's at least 0.2 mm and most ensemble runs agree. A single drizzly hour, or one outlier model, can't flip the call. Missing data is never treated as "dry". Details and backtest numbers: [Accuracy](docs/accuracy.md).
+**Accurate forecasts.** Instead of one model's daily summary, the script pulls hourly forecasts from three independent models (Canada's GEM, ECMWF, and NOAA's GFS) plus their ensembles (103 alternate runs). A day counts as wet when the middle model expects at least 1.5 mm, or at least 0.2 mm with 30%+ of the ensemble runs agreeing. A single drizzly hour, or one outlier model, can't flip the call. Missing data is never treated as "dry". Backtested over a year of Toronto weather, "good" calls that got rained on the same or next day dropped from 24% to 6%. Details: [Accuracy](docs/accuracy.md).
 
 **On-time delivery.** GitHub's scheduler runs late and skips firings (on this repo, scheduled runs land roughly every 5 hours). So the first run overnight works out the verdict and hands it to ntfy with an 8:00 AM delivery time. If no run lands overnight, the first run before 11 AM sends it immediately, marked late. Each day is handled once.
 
