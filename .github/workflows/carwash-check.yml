@@ -2,43 +2,37 @@ name: Daily Car Wash Check
 
 on:
   schedule:
-    # Fire every 30 minutes (UTC). The script reads your local timezone
-    # from Open-Meteo's response and runs at most once per morning /
-    # evening slot per local day, tracked in state.json. Redundant
-    # firings exit cheaply without committing state; firings delayed by
-    # GitHub Actions cron drift still catch the slot on the next tick.
-    - cron: "*/30 * * * *"
+    # GitHub runs scheduled workflows late and drops many firings (on this
+    # repo they land roughly every 5 hours, not every 30 minutes). The
+    # script doesn't care: the first firing in the overnight prep window
+    # hands the notification to ntfy with a delivery time of MORNING_HOUR,
+    # so it arrives on time anyway. Firing often just raises the odds that
+    # one lands in the window. Off-peak minutes (not :00/:30) get dropped less.
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
-        description: "Bypass the local-time window and send a notification now (for testing)."
+        description: "Send a notification right now (for testing). Doesn't affect the scheduled one."
         type: boolean
         default: false
 
 # ── Configuration ─────────────────────────────────────────────────────
-# Override these by going to:
-#   Settings → Secrets and variables → Actions → Variables
-# and creating LOCATION (easiest) and NTFY_TOPIC.
+# Override these under Settings → Secrets and variables → Actions →
+# Variables. LOCATION and NTFY_TOPIC are the only ones most people need.
 #
-# LOCATION accepts anything Nominatim can resolve: city name, address,
-# postal code. When set, it wins over LATITUDE/LONGITUDE. The first
-# run after it changes does a single geocode call; the script caches
-# the coordinates in state.json so subsequent runs are free.
+# LOCATION accepts anything Nominatim can resolve: city, address, postal
+# code. When set it wins over LATITUDE/LONGITUDE; it's geocoded once and
+# cached in state.json.
 #
-# MORNING_HOUR and EVENING_HOUR are local hours at your LOCATION
-# (defaults: 6 = 6:00 AM, 21.5 = 9:30 PM). Decimals are supported.
-# Timezone is derived from your coordinates, so you never set it
-# manually and DST is handled automatically.
+# MORNING_HOUR is the local hour the daily verdict arrives (default 8 =
+# 8:00 AM; decimals OK, 7.5 = 7:30). Timezone and DST come from your
+# coordinates automatically.
 #
-# MIN_WASH_TEMP_C is the overnight-low threshold (in °C) below which
-# the script switches to the "🥶 Too cold for a wash" verdict — a
-# wash will freeze on the car. Default -5; set very negative to
-# disable.
+# MIN_WASH_TEMP_C: if tonight's low drops below this (°C), the verdict is
+# "🥶 Too cold for a wash". Default -5; set -100 to disable.
 #
-# The LATITUDE/LONGITUDE defaults below point at New York City and a
-# shared public demo ntfy topic, fine for a "does it work?" test,
-# but you'll want your own topic for privacy (anyone subscribed to the
-# demo topic sees everyone else's notifications).
+# The LATITUDE/LONGITUDE defaults point at New York City and a shared
+# public demo topic, fine for a "does it work?" test only.
 #
 # VARS_* mirror the raw repo-variable values so the script can tell
 # whether each setting is customized or falling back to a demo default.
@@ -47,19 +41,24 @@ env:
   LATITUDE:         ${{ vars.LATITUDE         || '40.7128'  }}
   LONGITUDE:        ${{ vars.LONGITUDE        || '-74.0060' }}
   NTFY_TOPIC:       ${{ vars.NTFY_TOPIC       || 'car-wash-time-demo-a9k2p4xe' }}
-  MORNING_HOUR:     ${{ vars.MORNING_HOUR     || '6' }}
-  EVENING_HOUR:     ${{ vars.EVENING_HOUR     || '21.5' }}
+  MORNING_HOUR:     ${{ vars.MORNING_HOUR     || '8' }}
   MIN_WASH_TEMP_C:  ${{ vars.MIN_WASH_TEMP_C  || '-5' }}
   FORCE_RUN:        ${{ inputs.force_run }}
   VARS_LAT:         ${{ vars.LATITUDE         }}
   VARS_LON:         ${{ vars.LONGITUDE        }}
   VARS_TOPIC:       ${{ vars.NTFY_TOPIC       }}
 
-# We need contents:write to commit state.json back to main after each
-# run. That commit is both how we dedupe notifications across runs and
-# how we keep GitHub from auto-disabling this scheduled workflow.
+# contents:write lets the job commit state.json back to main. That commit
+# is how runs remember the day is handled, and the daily activity keeps
+# GitHub from auto-disabling the schedule after 60 quiet days.
 permissions:
   contents: write
+
+# Bunched-up scheduled runs would otherwise read the same state.json and
+# both notify. Queue them instead.
+concurrency:
+  group: carwash-check
+  cancel-in-progress: false
 
 jobs:
   check-weather:
@@ -68,9 +67,13 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v6
+        with:
+          # Always run against the latest state.json, not the commit that
+          # was current when this (possibly long-delayed) run was queued.
+          ref: main
 
       - name: Check weather and notify
-        run: bash scripts/check.sh
+        run: python3 scripts/carwash.py
 
       - name: Commit updated state
         run: |
@@ -90,7 +93,9 @@ jobs:
                 exit 1
               fi
               echo "Push rejected (attempt $attempt) — rebasing on latest main and retrying."
-              git pull --rebase origin main
+              # state.json is the only file this job writes; on a conflict
+              # ours is the newer truth.
+              git pull --rebase -X theirs origin main
               attempt=$((attempt + 1))
             done
           fi

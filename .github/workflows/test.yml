@@ -5,11 +5,11 @@ on:
     branches: [main]
     paths:
       - "scripts/**"
-      - ".github/workflows/test.yml"
+      - ".github/workflows/*.yml"
   pull_request:
     paths:
       - "scripts/**"
-      - ".github/workflows/test.yml"
+      - ".github/workflows/*.yml"
 
 # This is a fast, offline test run — no need to grant write permissions.
 permissions:
@@ -23,11 +23,5 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
-      - name: Lint check.sh and tests with shellcheck
-        # --severity=warning skips noisy info-level findings while still
-        # catching real bugs. -x follows `source` so the test file knows
-        # which globals come from check.sh.
-        run: shellcheck --severity=warning -x scripts/check.sh scripts/tests/run.sh
-
       - name: Run test suite
-        run: bash scripts/tests/run.sh
+        run: python3 -m unittest discover -s scripts/tests -v

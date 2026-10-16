@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  A GitHub Actions workflow that checks the forecast twice a day and pushes a notification with a go / maybe / skip verdict.
+  A GitHub Actions workflow that checks the forecast every morning and pushes a go / maybe / skip verdict at 8:00 AM.
 </p>
 
 <p align="center">
@@ -22,24 +22,22 @@
 
 ## Why This Exists
 
-My car is parked outside year-round. Through a Canadian winter that means road salt, slush, and freezing rain — a wash is only worth paying for if there's a clear stretch before the next storm coats everything again. The same logic applies to rain in the warmer months. Rather than checking the forecast manually every time I drive past a wash, this sends a twice-daily verdict so the decision is already made.
+My car is parked outside year-round. Through a Canadian winter that means road salt, slush, and freezing rain — a wash is only worth paying for if there's a clear stretch before the next storm coats everything again. The same logic applies to rain in the warmer months. Rather than checking the forecast manually every time I drive past a wash, this sends a verdict every morning so the decision is already made.
 
 ## What You'll Get
 
-Twice a day, a push notification with one of four verdicts. The title is the call; the body is a single short line of context — what's coming, when it clears, or how cold.
+Every morning at 8:00 AM local time, a push notification with one of four verdicts. The title is the call; the body is one short line of context: what's coming, when it clears, or how cold.
 
 | Verdict | Notification |
 |---|---|
-| **Good** | ☀️ Good day for a wash<br/>_Three clear days ahead. Go for it._<br/>_Clean stretch: 4 days ahead. Go for it._<br/>_Clear all week. Go for it._ |
-| **Maybe** | 🤔 Maybe wash it<br/>_Dry today, expect rain. Your call. Next clean window: Thu onward (3 days)._ |
-| **Skip** | 🚫 Skip the wash<br/>_Rain moving in tomorrow — wait it out. Next clean window: Wed onward (4 days)._ |
-| **Too cold** | 🥶 Too cold for a wash<br/>_Overnight low -12°C._ |
+| **Good** | ☀️ Good day for a wash<br/>_Dry today and the next 3 days. Go for it._<br/>_Dry for the next 5 days. Go for it._<br/>_Dry all week. Go for it._ |
+| **Maybe** | 🤔 Maybe wash it<br/>_Dry today and tomorrow, then rain Sun (60% chance). Your call. Next dry stretch: Mon onward (4 days)._ |
+| **Skip** | 🚫 Skip the wash<br/>_Rain today (80% chance), wait it out. Next dry stretch: tomorrow onward (6 days)._ |
+| **Too cold** | 🥶 Too cold for a wash<br/>_Tonight drops to -12°C; a fresh wash would freeze on the car._ |
 
-The body adapts to the forecast: `Good` says how long the clean stretch lasts when it extends past the 3-day window; `Maybe` and `Skip` add the next clean window when one fits in the lookahead. No location line, no multi-day forecast list, no tap-target — the verdict is the message.
+"Good" means the rest of today (from 8 AM) and the next three days all look dry. "Skip" means rain or snow today or tomorrow; "Maybe" means it holds for two days, then turns. The "too cold" verdict fires when tonight's low drops below `MIN_WASH_TEMP_C` (default -5 °C) and trumps the rest. See [Customization](docs/customize.md#tune-the-freeze-warning).
 
-The "too cold" verdict fires when tomorrow's overnight low is below `MIN_WASH_TEMP_C` (default -5 °C) — a fresh wash will freeze on the car. Trumps the precipitation verdict. Threshold is configurable; see [Customization](docs/customize.md#tune-the-freeze-warning).
-
-Repeated "skip", "maybe", or "too cold" days don't spam you. You only get notified when the verdict is "good" (actionable) or when it changes from the day before.
+Repeated "skip", "maybe", or "too cold" mornings don't spam you: you only hear about those when the verdict changes. "Good" always pings, because it's the one you act on.
 
 ## Get It Running in 5 Minutes
 
@@ -56,7 +54,7 @@ On your fork, open **Settings → Secrets and variables → Actions → Variable
 | Variable | Example | What it is |
 |---|---|---|
 | `LOCATION` | `Toronto, Ontario` | City, address, or postal code. Anything a map can find. |
-| `NTFY_TOPIC` | `my-carwash-x7k9m2p4` | A unique [ntfy.sh](https://ntfy.sh) topic. Keep it long and random. |
+| `NTFY_TOPIC` | `carwash-<long-random-string>` | A unique [ntfy.sh](https://ntfy.sh) topic. Keep it long and random. |
 
 > **Note:** ntfy topics are public by design. Anyone who knows your topic name can subscribe and read your notifications. Pick something nobody would guess.
 
@@ -80,30 +78,36 @@ That's it. From here on it runs on its own.
 
 ```mermaid
 flowchart LR
-    A[GitHub Actions<br/>cron: 6am + 9:30pm ET] --> B[Open-Meteo<br/>7-day forecast]
-    B --> H{Overnight low<br/>< MIN_WASH_TEMP_C?}
+    A[GitHub Actions<br/>loose cron, overnight] --> B[Open-Meteo<br/>GEM + ECMWF + GFS<br/>+ 103-member ensemble]
+    B --> H{Tonight's low<br/>< MIN_WASH_TEMP_C?}
     H -->|Yes| I[🥶 Too cold]
-    H -->|No| C{Precipitation<br/>in next 3 days?}
-    C -->|None| D[☀️ Good]
-    C -->|Today dry,<br/>precip later| E[🤔 Maybe]
-    C -->|Precip tomorrow| F[🚫 Skip]
-    D --> G[ntfy.sh<br/>push to phone]
-    E --> G
+    H -->|No| C{Wet today<br/>or tomorrow?}
+    C -->|Yes| F[🚫 Skip]
+    C -->|No| E{Wet in the<br/>2 days after?}
+    E -->|Yes| M[🤔 Maybe]
+    E -->|No| D[☀️ Good]
+    D --> G[ntfy.sh<br/>delivers at 8:00 AM]
+    M --> G
     F --> G
     I --> G
 
     style D fill:#d4edda,stroke:#28a745,color:#000
-    style E fill:#fff3cd,stroke:#ffc107,color:#000
+    style M fill:#fff3cd,stroke:#ffc107,color:#000
     style F fill:#f8d7da,stroke:#dc3545,color:#000
     style I fill:#cfe2ff,stroke:#0d6efd,color:#000
 ```
 
-The script checks for rain, snow, drizzle, freezing rain, and thunderstorms using [WMO weather codes](https://open-meteo.com/en/docs#weather-code), plus the overnight temperature for the freeze warning. The whole thing is a single bash script in [`scripts/check.sh`](scripts/check.sh) — see [`scripts/tests/run.sh`](scripts/tests/run.sh) for the test suite that exercises every verdict.
+**Accurate forecasts.** Instead of one model's daily summary, the script pulls hourly forecasts from three independent models (Canada's GEM, ECMWF, and NOAA's GFS) plus their ensembles (103 alternate runs). A day counts as wet when the models' median total is at least 1 mm, or when it's at least 0.2 mm and most ensemble runs agree. A single drizzly hour, or one outlier model, can't flip the call. Missing data is never treated as "dry". Details and backtest numbers: [Accuracy](docs/accuracy.md).
+
+**On-time delivery.** GitHub's scheduler runs late and skips firings (on this repo, scheduled runs land roughly every 5 hours). So the first run overnight works out the verdict and hands it to ntfy with an 8:00 AM delivery time. If no run lands overnight, the first run before 11 AM sends it immediately, marked late. Each day is handled once.
+
+The whole thing is one stdlib-only Python file, [`scripts/carwash.py`](scripts/carwash.py), with tests in [`scripts/tests/`](scripts/tests/).
 
 ## Going Deeper
 
 - **[Privacy](docs/privacy.md)**: what leaks on a public fork, and how to keep your setup private
-- **[Customization](docs/customize.md)**: change the schedule, use coordinates instead of an address, file reference
+- **[Customization](docs/customize.md)**: change the delivery time, use coordinates instead of an address, file reference
+- **[Accuracy](docs/accuracy.md)**: how the verdict is computed, and how it was backtested
 
 ## Tech Stack
 
@@ -111,7 +115,7 @@ Everything here is free and key-free.
 
 | What | Why |
 |---|---|
-| [Open-Meteo](https://open-meteo.com/) | Weather API, no key |
+| [Open-Meteo](https://open-meteo.com/) | Weather + ensemble APIs, no key |
 | [Nominatim](https://nominatim.openstreetmap.org/) | Geocodes your `LOCATION` to coordinates |
 | [ntfy.sh](https://ntfy.sh) | Push notifications, no account |
 | [GitHub Actions](https://github.com/features/actions) | Scheduled workflows |
