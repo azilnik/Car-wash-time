@@ -521,10 +521,12 @@ def decide(fc: Forecast, wash_day: dt.date, wash_hour: float = 8.0,
 
 # ── Message composition ───────────────────────────────────────────────
 TITLES = {
-    "good": ("☀️ Good day for a wash", "car,white_check_mark"),
-    "maybe": ("🤔 Maybe wash it", "car,thinking"),
-    "no": ("🚫 Skip the wash", "car,x"),
-    "freeze": ("🥶 Too cold for a wash", "car,snowflake"),
+    # No ntfy tags: tags that match emoji names render as extra emoji in
+    # front of the title ("🚗❌ 🚫 Skip the wash"). The title's own emoji is enough.
+    "good": ("☀️ Good day for a wash", ""),
+    "maybe": ("🤔 Maybe wash it", ""),
+    "no": ("🚫 Skip the wash", ""),
+    "freeze": ("🥶 Too cold for a wash", ""),
 }
 
 
@@ -578,8 +580,9 @@ def send_ntfy(topic: str, title: str, body: str, tags: str, deliver_at: Optional
     """Publish via ntfy's JSON API (UTF-8 safe, unlike headers). With
     `deliver_at` (unix seconds) ntfy holds the message and delivers it
     then; the free ntfy.sh server allows up to 3 days of delay."""
-    payload: dict[str, Any] = {"topic": topic, "title": title, "message": body,
-                               "tags": [t for t in tags.split(",") if t]}
+    payload: dict[str, Any] = {"topic": topic, "title": title, "message": body}
+    if tags:
+        payload["tags"] = [t for t in tags.split(",") if t]
     if deliver_at is not None:
         payload["delay"] = str(deliver_at)
     http(NTFY_URL, method="POST", data=json.dumps(payload).encode(),

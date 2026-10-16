@@ -249,7 +249,8 @@ class FuzzTests(unittest.TestCase):
                 self.assertIn(v.kind, {"good", "maybe", "no", "freeze", "unknown"})
                 if v.kind != "unknown":
                     title, body, tags = c.compose(v)
-                    self.assertTrue(title and body and tags)
+                    self.assertTrue(title and body)
+                    self.assertEqual(tags, "")
                     self.assertNotIn("None", body)
 
 
