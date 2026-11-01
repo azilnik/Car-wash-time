@@ -10,8 +10,8 @@
   "location_name": "Toronto",
   "last_morning_slot_date": "2026-10-15",
   "last_evening_slot_date": "2026-10-15",
-  "utc_offset_seconds": -14400,
-  "last_handled_date": "2026-10-31",
+  "utc_offset_seconds": -18000,
+  "last_handled_date": "2026-11-01",
   "history": [
     {
       "wash_day": "2026-10-16",
@@ -569,6 +569,38 @@
       "title": "🤔 Maybe wash it",
       "body": "Dry today and tomorrow, then rain Tue (50% chance). Your call.",
       "deliver_at": "2026-10-31T12:00:00Z"
+    },
+    {
+      "wash_day": "2026-11-01",
+      "verdict": "maybe",
+      "decided_at": "2026-11-01T09:06:49Z",
+      "forecast": [
+        {
+          "date": "2026-11-01",
+          "mm": 0.0,
+          "prob": 0.0,
+          "wet": false
+        },
+        {
+          "date": "2026-11-02",
+          "mm": 0.0,
+          "prob": 0.18,
+          "wet": false
+        },
+        {
+          "date": "2026-11-03",
+          "mm": 0.1,
+          "prob": 0.45,
+          "wet": false
+        },
+        {
+          "date": "2026-11-04",
+          "mm": 0.9,
+          "prob": 0.56,
+          "wet": true
+        }
+      ],
+      "notified": false
     }
   ]
 }
