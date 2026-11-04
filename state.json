@@ -11,7 +11,7 @@
   "last_morning_slot_date": "2026-10-15",
   "last_evening_slot_date": "2026-10-15",
   "utc_offset_seconds": -18000,
-  "last_handled_date": "2026-11-03",
+  "last_handled_date": "2026-11-04",
   "history": [
     {
       "wash_day": "2026-10-16",
@@ -664,6 +664,38 @@
           "date": "2026-11-06",
           "mm": 0.2,
           "prob": 0.72,
+          "wet": true
+        }
+      ],
+      "notified": false
+    },
+    {
+      "wash_day": "2026-11-04",
+      "verdict": "no",
+      "decided_at": "2026-11-04T06:55:14Z",
+      "forecast": [
+        {
+          "date": "2026-11-04",
+          "mm": 1.5,
+          "prob": 0.96,
+          "wet": true
+        },
+        {
+          "date": "2026-11-05",
+          "mm": 2.0,
+          "prob": 1.0,
+          "wet": true
+        },
+        {
+          "date": "2026-11-06",
+          "mm": 0.4,
+          "prob": 0.91,
+          "wet": true
+        },
+        {
+          "date": "2026-11-07",
+          "mm": 2.76,
+          "prob": 0.84,
           "wet": true
         }
       ],
