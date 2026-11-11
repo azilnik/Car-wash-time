@@ -11,7 +11,7 @@
   "last_morning_slot_date": "2026-10-15",
   "last_evening_slot_date": "2026-10-15",
   "utc_offset_seconds": -18000,
-  "last_handled_date": "2026-11-10",
+  "last_handled_date": "2026-11-11",
   "history": [
     {
       "wash_day": "2026-10-16",
@@ -901,6 +901,38 @@
       "title": "🚫 Skip the wash",
       "body": "Rain tomorrow (80% chance), wait it out. Next dry stretch: Fri onward (5 days).",
       "deliver_at": "2026-11-10T13:00:00Z"
+    },
+    {
+      "wash_day": "2026-11-11",
+      "verdict": "no",
+      "decided_at": "2026-11-11T07:00:04Z",
+      "forecast": [
+        {
+          "date": "2026-11-11",
+          "mm": 2.8,
+          "prob": 0.89,
+          "wet": true
+        },
+        {
+          "date": "2026-11-12",
+          "mm": 4.7,
+          "prob": 0.92,
+          "wet": true
+        },
+        {
+          "date": "2026-11-13",
+          "mm": 0.0,
+          "prob": 0.2,
+          "wet": false
+        },
+        {
+          "date": "2026-11-14",
+          "mm": 0.0,
+          "prob": 0.33,
+          "wet": false
+        }
+      ],
+      "notified": false
     }
   ]
 }
