@@ -2,7 +2,7 @@
   "last_run_utc": "2026-10-16T04:47:20Z",
   "last_verdict": "good",
   "last_notified_verdict": "good",
-  "last_notified_at": "2026-11-12T13:00:00Z",
+  "last_notified_at": "2026-11-13T13:00:00Z",
   "location": "Toronto",
   "location_query": "Toronto, Ontario",
   "location_lat": "43.6534817",
@@ -11,7 +11,7 @@
   "last_morning_slot_date": "2026-10-15",
   "last_evening_slot_date": "2026-10-15",
   "utc_offset_seconds": -18000,
-  "last_handled_date": "2026-11-12",
+  "last_handled_date": "2026-11-13",
   "history": [
     {
       "wash_day": "2026-10-16",
@@ -968,6 +968,41 @@
       "title": "☀️ Good day for a wash",
       "body": "Dry all week. Go for it.",
       "deliver_at": "2026-11-12T13:00:00Z"
+    },
+    {
+      "wash_day": "2026-11-13",
+      "verdict": "good",
+      "decided_at": "2026-11-13T06:30:29Z",
+      "forecast": [
+        {
+          "date": "2026-11-13",
+          "mm": 0.0,
+          "prob": 0.01,
+          "wet": false
+        },
+        {
+          "date": "2026-11-14",
+          "mm": 0.0,
+          "prob": 0.28,
+          "wet": false
+        },
+        {
+          "date": "2026-11-15",
+          "mm": 0.0,
+          "prob": 0.07,
+          "wet": false
+        },
+        {
+          "date": "2026-11-16",
+          "mm": 0.0,
+          "prob": 0.01,
+          "wet": false
+        }
+      ],
+      "notified": true,
+      "title": "☀️ Good day for a wash",
+      "body": "Dry all week. Go for it.",
+      "deliver_at": "2026-11-13T13:00:00Z"
     }
   ]
 }
