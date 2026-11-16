@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  A GitHub Actions workflow that checks the forecast every morning and pushes a go / maybe / skip verdict at 8:00 AM.
+  A GitHub Actions workflow that checks the forecast every morning and pushes a go / maybe / skip / too cold verdict at 8:00 AM.
 </p>
 
 <p align="center">
